@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+<title>Breaker Monitoring Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+  color: #f1f5f9;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.dashboard {
+  max-width: 1600px;
+  height: 100vh;
+  margin: 0 auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+/* Background Glow */
+.bg-glow {
+  position: fixed;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  filter: blur(150px);
+  z-index: 0;
+  opacity: 0.25;
+}
+.bg-glow--left { background: #0ea5e9; top: -200px; left: -200px; }
+.bg-glow--right { background: #8b5cf6; bottom: -200px; right: -200px; }
+
+/* Header */
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 20px;
+  background: rgba(30, 41, 59, 0.6);
+  backdrop-filter: blur(12px);
+  border-radius: 16px;
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  flex-shrink: 0;
+}
+.title-block h1 {
+  font-size: 18px;
+  font-weight: 800;
+  background: linear-gradient(135deg, #ffffff, #0ea5e9);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 2px;
+}
+.title-block p {
+  font-size: 10px;
+  color: #94a3b8;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.system-status-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #0f172a;
+  padding: 4px 10px;
+  border-radius: 30px;
+  border-left: 2px solid #22c55e;
+}
+.status-label {
+  font-size: 10px;
+  color: #94a3b8;
+}
+.status-value-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: #22c55e;
+}
+.live-chip {
+  font-size: 9px;
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.15);
+  padding: 3px 10px;
+  border-radius: 30px;
+  font-weight: 600;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.btn {
+  background: #0ea5e9;
+  border: none;
+  color: white;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 11px;
+  transition: all 0.2s;
+}
+.btn:hover {
+  background: #0284c7;
+}
+
+/* Chart Section */
+.chart-section {
+  background: rgba(30, 41, 59, 0.6);
+  backdrop-filter: blur(12px);
+  border-radius: 16px;
+  padding: 10px 16px;
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  flex-shrink: 0;
+}
+.section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.section-title h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+.chart-container {
+  width: 100%;
+  height: 130px;
+  background: #0f172a;
+  border-radius: 10px;
+  padding: 6px;
+  margin-bottom: 6px;
+}
+.trend-chart {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.chart-legend {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  color: #94a3b8;
+}
+.legend-dot {
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+}
+.temp-dot { background: #0ea5e9; }
+.current-dot { background: #facc15; }
+.hotspot-dot { background: #ef4444; }
+.overload-dot { background: #a855f7; }
+
+/* KPI Row */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  flex-shrink: 0;
+}
+.kpi-card {
+  background: rgba(30, 41, 59, 0.6);
+  backdrop-filter: blur(12px);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid rgba(14, 165, 233, 0.2);
+  transition: all 0.2s;
+}
+.kpi-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(14, 165, 233, 0.5);
+}
+.kpi-icon { font-size: 28px; flex-shrink: 0; }
+.kpi-content { flex: 1; }
+.kpi-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  display: block;
+}
+.kpi-value {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin-bottom: 3px;
+}
+.kpi-unit {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-left: 3px;
+}
+.kpi-note {
+  font-size: 8px;
+  color: #64748b;
+}
+.progress-bar-container {
+  width: 100%;
+  height: 3px;
+  background: #334155;
+  border-radius: 3px;
+  margin: 5px 0 2px;
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+.probability-value {
+  font-size: 18px;
+  font-weight: 800;
+  margin-bottom: 3px;
+}
+.breaker-state-text {
+  font-size: 18px;
+  font-weight: 700;
+}
+.breaker-state-text.Normal { color: #22c55e; }
+.breaker-state-text.Overload { color: #f87171; }
+.breaker-state-text.Potential\ Overload { color: #fbbf24; }
+.breaker-state-text.Overheating { color: #f43f5e; }
+
+/* Two Column Layout */
+.two-column-row {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.left-column {
+  flex: 0.8;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.right-column {
+  flex: 1.2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Breaker State Card */
+.breaker-state-card {
+  background: rgba(30, 41, 59, 0.6);
+  backdrop-filter: blur(12px);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid rgba(14, 165, 233, 0.2);
+  flex-shrink: 0;
+}
+
+/* Mitigation Card */
+.mitigation-card {
+  background: linear-gradient(135deg, #1e293b, #0f172a);
+  border-left: 3px solid #0ea5e9;
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+.mitigation-card .kpi-icon {
+  font-size: 26px;
+}
+.mitigation-card .kpi-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.suggestion-text {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e2e8f0;
+  line-height: 1.3;
+}
+.action-badge {
+  background: rgba(14, 165, 233, 0.15);
+  padding: 5px 10px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  width: fit-content;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+}
+.action-badge strong {
+  color: #38bdf8;
+}
+.risk-badge {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 10px;
+  width: fit-content;
+}
+.risk-critical, .risk-high { background: #7f1a1a; color: #fecaca; }
+.risk-medium { background: #854d0e; color: #fef9c3; }
+.risk-low { background: #064e3b; color: #86efac; }
+
+/* Recent Events Card - FILLS ALL THE WAY DOWN - NO ROW LIMIT */
+.recent-events-card {
+  background: rgba(30, 41, 59, 0.6);
+  backdrop-filter: blur(12px);
+  border-radius: 14px;
+  border: 1px solid rgba(14, 165, 233, 0.2);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.recent-events-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(14, 165, 233, 0.2);
+  flex-shrink: 0;
+}
+.recent-events-header h3 {
+  font-size: 11px;
+  font-weight: 600;
+}
+.history-link {
+  color: #0ea5e9;
+  text-decoration: none;
+  font-size: 10px;
+  transition: color 0.2s;
+}
+.history-link:hover {
+  color: #38bdf8;
+}
+.recent-events-table-wrapper {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.recent-events-table-wrapper::-webkit-scrollbar {
+  width: 4px;
+}
+.recent-events-table-wrapper::-webkit-scrollbar-track {
+  background: #1e293b;
+  border-radius: 4px;
+}
+.recent-events-table-wrapper::-webkit-scrollbar-thumb {
+  background: #0ea5e9;
+  border-radius: 4px;
+}
+.recent-events-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+.recent-events-table thead tr {
+  background: #0f172a;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.recent-events-table th {
+  padding: 8px 10px;
+  text-align: left;
+  color: #94a3b8;
+  font-size: 9px;
+  font-weight: 600;
+}
+.recent-events-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #334155;
+  font-size: 9px;
+}
+.recent-events-table tbody tr:hover {
+  background: rgba(14, 165, 233, 0.1);
+}
+.status-normal { color: #86efac; }
+.status-warning { color: #fde047; }
+.status-overload { color: #fdba74; }
+.status-danger { color: #fca5a5; }
+.empty-state {
+  text-align: center;
+  padding: 40px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .dashboard { padding: 12px 16px; gap: 10px; }
+  .kpi-value { font-size: 20px; }
+  .probability-value { font-size: 16px; }
+  .breaker-state-text { font-size: 16px; }
+  .chart-container { height: 120px; }
+  .recent-events-table th,
+  .recent-events-table td {
+    padding: 6px 8px;
+    font-size: 8px;
+  }
+}
+@media (max-width: 768px) {
+  .kpi-row { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .two-column-row { flex-direction: column; }
+  .left-column { flex-direction: row; }
+  .right-column { min-height: 300px; }
+  .chart-container { height: 110px; }
+  .recent-events-table th,
+  .recent-events-table td {
+    padding: 5px 6px;
+    font-size: 7px;
+  }
+}
+@media (max-width: 480px) {
+  .dashboard { padding: 10px; }
+  .kpi-row { grid-template-columns: 1fr; }
+  .left-column { flex-direction: column; }
+  .dashboard-header { flex-direction: column; text-align: center; gap: 8px; }
+  .header-actions { justify-content: center; }
+  .right-column { min-height: 350px; }
+  .recent-events-table th,
+  .recent-events-table td {
+    padding: 4px;
+    font-size: 6px;
+  }
+}
+</style>
+</head>
+<body>
+
+<div class="bg-glow bg-glow--left"></div>
+<div class="bg-glow bg-glow--right"></div>
+
+<main class="dashboard">
+  <header class="dashboard-header">
+    <div class="title-block">
+      <h1><span>⚡ BREAKER</span> MONITORING CENTER</h1>
+      <p>Real-time Circuit Protection & Analytics</p>
+    </div>
+    <div class="header-actions">
+      <div class="system-status-header">
+        <span class="status-label">🖥️ System:</span>
+        <span id="system-status-header" class="status-value-header">SIMULATION</span>
+      </div>
+      <div class="live-chip">● LIVE</div>
+      <button id="refresh-btn" class="btn" onclick="location.reload()">⟳ Refresh</button>
+    </div>
+  </header>
+
+  <div class="chart-section">
+    <div class="section-title">
+      <h3>📈 Real-Time Monitoring Trends</h3>
+    </div>
+    <div class="chart-container">
+      <canvas id="combinedChart" class="trend-chart"></canvas>
+    </div>
+    <div class="chart-legend">
+      <div class="legend-item"><span class="legend-dot temp-dot"></span> Temperature</div>
+      <div class="legend-item"><span class="legend-dot current-dot"></span> Current</div>
+      <div class="legend-item"><span class="legend-dot hotspot-dot"></span> Hotspot Probability</div>
+      <div class="legend-item"><span class="legend-dot overload-dot"></span> Overload Probability</div>
+    </div>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-icon">🌡️</div>
+      <div class="kpi-content">
+        <span class="kpi-label">Temperature</span>
+        <div class="kpi-value"><span id="temperature-value">--</span><span class="kpi-unit">°C</span></div>
+        <span id="temperature-note" class="kpi-note">Normal range</span>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">⚡</div>
+      <div class="kpi-content">
+        <span class="kpi-label">Current</span>
+        <div class="kpi-value"><span id="current-value">--</span><span class="kpi-unit">A</span></div>
+        <span id="current-note" class="kpi-note">Normal range</span>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">🔥</div>
+      <div class="kpi-content">
+        <span class="kpi-label">Hotspot Probability</span>
+        <div class="probability-value" id="hotspot-value">0%</div>
+        <div class="progress-bar-container"><div class="progress-bar" id="hotspot-bar" style="width:0%"></div></div>
+        <span id="hotspot-percent" class="kpi-note">0% risk</span>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-icon">⚠️</div>
+      <div class="kpi-content">
+        <span class="kpi-label">Overload Probability</span>
+        <div class="probability-value" id="overload-value">0%</div>
+        <div class="progress-bar-container"><div class="progress-bar" id="overload-bar" style="width:0%"></div></div>
+        <span id="overload-percent" class="kpi-note">0% risk</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="two-column-row">
+    <div class="left-column">
+      <div class="breaker-state-card">
+        <div class="kpi-icon">🔌</div>
+        <div class="kpi-content">
+          <span class="kpi-label">Breaker State</span>
+          <div class="kpi-value"><span id="breaker-state" class="breaker-state-text">Unknown</span></div>
+          <span id="state-note" class="kpi-note">Monitoring system status</span>
+        </div>
+      </div>
+      <div class="mitigation-card">
+        <div class="kpi-icon">🛡️</div>
+        <div class="kpi-content">
+          <span class="kpi-label">Mitigation & Recommendations</span>
+          <div id="suggestion-main" class="suggestion-text">System operating normally</div>
+          <div class="action-badge"><span>🔧</span><strong id="action-text">Standby - Monitoring</strong></div>
+          <div id="risk-badge-container"></div>
+        </div>
+      </div>
+    </div>
+    <div class="right-column">
+      <div class="recent-events-card">
+        <div class="recent-events-header">
+          <h3>📋 Recent Events</h3>
+          <a href="/full_history.html" class="history-link">Full History →</a>
+        </div>
+        <div class="recent-events-table-wrapper">
+          <table class="recent-events-table">
+            <thead>
+              <tr><th>Time</th><th>Temp</th><th>Current</th><th>Hotspot</th><th>Overload</th><th>State</th><th>Status</th></tr>
+            </thead>
+            <tbody id="log-body">
+              <!-- Rows will be populated dynamically - NO LIMIT -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="/static/dashboard.js"></script>
+<script>
+  // Override any row limiting in dashboard.js
+  (function() {
+    // Store original functions if needed
+    let originalUpdateTable;
+    
+    // Wait for dashboard.js to load and then modify its behavior
+    window.addEventListener('load', function() {
+      // Force remove any row limit by monitoring the table body
+      const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+          if (mutation.type === 'childList') {
+            // Ensure all rows are visible
+            const rows = document.querySelectorAll('#log-body tr');
+            rows.forEach(row => {
+              row.style.display = 'table-row';
+            });
+          }
+        });
+      });
+      
+      observer.observe(document.getElementById('log-body'), { childList: true, subtree: true });
+      
+      // Also periodically check and remove any hidden rows
+      setInterval(function() {
+        const rows = document.querySelectorAll('#log-body tr');
+        rows.forEach(row => {
+          if (row.style.display === 'none') {
+            row.style.display = 'table-row';
+          }
+        });
+      }, 1000);
+    });
+  })();
+</script>
+</body>
+</html>
