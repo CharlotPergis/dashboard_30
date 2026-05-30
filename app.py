@@ -5,52 +5,19 @@ import time
 from flask_cors import CORS
 from flask_mail import Mail, Message
 from datetime import datetime
-from supabase import create_client
-import threading
+from supabase import create_client  # NEW: From Version 1
+import threading  # NEW: From Version 1
+
+from feature_engine import (
+    build_basic_features,
+    temp_buffer_short,
+    temp_buffer_long,
+    current_buffer_short,
+    current_buffer_long
+)
 
 # =========================================================
-# FEATURE ENGINE MODULE (simplified)
-# =========================================================
-temp_buffer = []
-current_buffer = []
-
-def build_basic_features(temp, current):
-    """Build basic features for ML prediction"""
-    import pandas as pd
-    
-    # Add to buffers
-    temp_buffer.append(temp)
-    current_buffer.append(current)
-    
-    # Keep last 10 samples
-    if len(temp_buffer) > 10:
-        temp_buffer.pop(0)
-    if len(current_buffer) > 10:
-        current_buffer.pop(0)
-    
-    # Calculate features
-    temp_mean = sum(temp_buffer) / len(temp_buffer) if temp_buffer else temp
-    current_mean = sum(current_buffer) / len(current_buffer) if current_buffer else current
-    
-    temp_trend = temp_buffer[-1] - temp_buffer[0] if len(temp_buffer) >= 2 else 0
-    current_trend = current_buffer[-1] - current_buffer[0] if len(current_buffer) >= 2 else 0
-    
-    # Create DataFrame with features
-    df = pd.DataFrame({
-        'temperature': [temp],
-        'current': [current],
-        'temp_mean_10': [temp_mean],
-        'current_mean_10': [current_mean],
-        'temp_trend': [temp_trend],
-        'current_trend': [current_trend],
-        'temp_current_ratio': [temp / current if current > 0 else 0],
-        'power': [temp * current]
-    })
-    
-    return df
-
-# =========================================================
-# FLASK APP INIT
+# INIT
 # =========================================================
 app = Flask(__name__,
             template_folder='templates',
@@ -62,7 +29,7 @@ latest_data_store = {}
 print("🔥 INITIALIZING SYSTEM...")
 
 # =========================================================
-# SUPABASE CONFIGURATION
+# SUPABASE CONFIGURATION (NEW: From Version 1)
 # =========================================================
 SUPABASE_URL = "https://qkniqwgcwvxkgjciccad.supabase.co"
 SUPABASE_KEY = "sb_publishable_pzHW1LlymSCVL876qchBKw_pPY0xN-2"
@@ -77,79 +44,59 @@ except Exception as e:
     print("⚠ Running without Supabase - data will be saved locally only")
 
 # =========================================================
-# EMAIL CONFIG
+# EMAIL CONFIG (SAFE)
 # =========================================================
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USE_SSL'] = False
 app.config['MAIL_USERNAME'] = 'breaker.monitor.system@gmail.com'
 app.config['MAIL_PASSWORD'] = 'kzng lhzr elww gyyu'
 app.config['MAIL_DEFAULT_SENDER'] = 'breaker.monitor.system@gmail.com'
-app.config['MAIL_DEBUG'] = True
+
+mail = None
+email_enabled = False
 
 try:
     mail = Mail(app)
+    email_enabled = True
     print("✓ Email service initialized")
 except Exception as e:
     print(f"✗ Email initialization error: {e}")
-    mail = None
+    print("⚠ Email alerts disabled — system continues normally")
 
 # =========================================================
 # LOAD MODELS
 # =========================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Create dummy models if they don't exist
-if not os.path.exists(os.path.join(BASE_DIR, "ml/hotspot_model.pkl")):
-    print("⚠️ Models not found, creating dummy models...")
-    os.makedirs(os.path.join(BASE_DIR, "ml"), exist_ok=True)
-    
-    from sklearn.ensemble import RandomForestClassifier
-    import pandas as pd
-    import numpy as np
-    
-    # Create dummy training data
-    X_train = pd.DataFrame({
-        'temperature': np.random.rand(100),
-        'current': np.random.rand(100),
-        'temp_mean_10': np.random.rand(100),
-        'current_mean_10': np.random.rand(100),
-        'temp_trend': np.random.rand(100),
-        'current_trend': np.random.rand(100),
-        'temp_current_ratio': np.random.rand(100),
-        'power': np.random.rand(100)
-    })
-    y_train = np.random.randint(0, 2, 100)
-    
-    dummy_model = RandomForestClassifier()
-    dummy_model.fit(X_train, y_train)
-    dummy_model.feature_names_in_ = X_train.columns
-    
-    joblib.dump(dummy_model, os.path.join(BASE_DIR, "ml/hotspot_model.pkl"))
-    joblib.dump(dummy_model, os.path.join(BASE_DIR, "ml/overload_model.pkl"))
-    print("✓ Dummy models created")
+hotspot_model = joblib.load(os.path.join(BASE_DIR, "ml/hotspot_model.pkl"))
+overload_model = joblib.load(os.path.join(BASE_DIR, "ml/overload_model.pkl"))
 
-hotspot_model = joblib.load(
-    os.path.join(BASE_DIR, "ml/hotspot_model.pkl")
-)
-
-overload_model = joblib.load(
-    os.path.join(BASE_DIR, "ml/overload_model.pkl")
-)
-
-print("✓ Models loaded successfully")
-
-# =========================================================
-# FEATURE LOCK
-# =========================================================
 FEATURE_COLUMNS = hotspot_model.feature_names_in_.tolist()
 
-print("✓ Feature lock loaded")
-print("Total features:", len(FEATURE_COLUMNS))
+# =========================================================
+# THRESHOLDS
+# =========================================================
+WARMUP_SAMPLES = 10
+WARNING_THRESHOLD = 0.70
+CRITICAL_THRESHOLD = 0.85
 
 # =========================================================
-# SUPABASE FUNCTIONS
+# ALERT TRACKING (Enhanced with Version 1 cooldown)
+# =========================================================
+last_alert_time = {}
+ALERT_COOLDOWN_SECONDS = 300
+
+def should_send_alert(alert_type):
+    now = time.time()
+    if alert_type in last_alert_time:
+        if now - last_alert_time[alert_type] < ALERT_COOLDOWN_SECONDS:
+            return False
+    last_alert_time[alert_type] = now
+    return True
+
+# =========================================================
+# SUPABASE FUNCTIONS (NEW: From Version 1)
 # =========================================================
 def send_to_supabase(temp, current, state, hot_prob, ovl_prob, composite_risk, action):
     """Send REAL sensor data to Supabase"""
@@ -186,280 +133,310 @@ def send_to_supabase(temp, current, state, hot_prob, ovl_prob, composite_risk, a
         return False
 
 # =========================================================
-# EMAIL ALERT FUNCTION (FIXED - COPIED FROM VER.1)
+# TIME-TO-TRIP CALCULATION (NEW: From Version 1)
 # =========================================================
-def send_breaker_alert(reading, risk, alert_type, time_to_trip=None):
-    if mail is None:
-        return False, "Email service not configured"
+def calculate_time_to_trip(temp, current, hot_prob, ovl_prob):
+    """Estimate time until breaker trips based on conditions"""
+    try:
+        # Base estimation logic
+        if hot_prob >= 0.85:
+            # Critical hotspot - very urgent
+            minutes = max(1, int(5 * (1 - (hot_prob - 0.85) / 0.15)))
+            urgency = "CRITICAL - Immediate action required"
+        elif hot_prob >= 0.70:
+            # Warning level
+            minutes = max(5, int(15 * (1 - (hot_prob - 0.70) / 0.15)))
+            urgency = "URGENT - Take action soon"
+        elif ovl_prob >= 0.85:
+            # Critical overload
+            minutes = max(2, int(8 * (1 - (ovl_prob - 0.85) / 0.15)))
+            urgency = "CRITICAL - Reduce load immediately"
+        elif ovl_prob >= 0.70:
+            # Overload warning
+            minutes = max(10, int(20 * (1 - (ovl_prob - 0.70) / 0.15)))
+            urgency = "MODERATE - Plan load reduction"
+        else:
+            return None
+        
+        # Format the time
+        if minutes < 60:
+            time_str = f"{minutes} minute{'s' if minutes != 1 else ''}"
+        else:
+            hours = minutes // 60
+            mins = minutes % 60
+            time_str = f"{hours} hour{'s' if hours != 1 else ''} {mins} minute{'s' if mins != 1 else ''}"
+        
+        return {
+            "minutes": minutes,
+            "formatted": time_str,
+            "urgency": urgency
+        }
+    except:
+        return None
 
-    recipients = ['gwenlykapergis@gmail.com',
-                  'mariamonicaragunjanvillaflor@gmail.com',
-                  'mercymicadespabiladeras@gmail.com']
+# =========================================================
+# FALLBACK LOGGER
+# =========================================================
+def log_fallback_alert(subject, body):
+    try:
+        with open("alert_fallback_log.txt", "a") as f:
+            f.write("\n============================\n")
+            f.write(f"TIME: {datetime.now()}\n")
+            f.write(f"SUBJECT: {subject}\n")
+            f.write(body + "\n")
+        print("✓ Alert saved locally (fallback log)")
+    except Exception as e:
+        print("⚠ Fallback logging failed:", e)
 
+# =========================================================
+# ENHANCED EMAIL ALERT SYSTEM (Merged Version 1 + Version 2)
+# =========================================================
+def send_breaker_alert(reading, risk, alert_type, message_action, time_to_trip=None):
+    """Enhanced email alert with time-to-trip information"""
+    
+    if not email_enabled or mail is None:
+        print("⚠ Email skipped (disabled)")
+        return False, "Email disabled"
+
+    recipients = [
+        'gwenlykapergis@gmail.com',
+        'mariamonicaragunjanvillaflor@gmail.com',
+        'mercymicadespabiladeras@gmail.com'
+    ]
+
+    # Add time-to-trip info if available
     time_to_trip_text = ""
-    if time_to_trip and alert_type in ["overheating", "prevention"]:
-        time_to_trip_text = f"\nEstimated Time to Trip: {time_to_trip['formatted']}\nUrgency: {time_to_trip['urgency']}"
+    if time_to_trip and alert_type in ["Critical", "Warning"]:
+        time_to_trip_text = f"\n\nEstimated Time to Trip: {time_to_trip['formatted']}\nUrgency: {time_to_trip['urgency']}"
 
-    if alert_type == "overheating":
-        subject = "🔥 CRITICAL: Breaker Overheating Alert!"
+    # Version 1 style subject lines
+    if alert_type == "Critical":
+        if risk['hotspot_prob'] >= 0.85:
+            subject = "🔥 CRITICAL: Breaker Overheating Alert!"
+        else:
+            subject = "🔴 CRITICAL: Severe Overload Detected!"
         body = f"""IMMEDIATE ACTION REQUIRED
 
-BREAKER OVERHEATING DETECTED!
+BREAKER {risk['hotspot_prob'] >= 0.85 and 'OVERHEATING' or 'OVERLOAD'} DETECTED!
 
 Temperature: {reading.temperature_c:.1f}°C
-Current: {reading.current_a:.1f}A
+Current: {reading.current_a:.2f}A
 Hotspot Probability: {risk['hotspot_prob']*100:.1f}%
 Overload Probability: {risk['overload_prob']*100:.1f}%
 {time_to_trip_text}
 
-Action: Isolate circuit immediately!
+Action Required: {message_action}
 
 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
 
-    elif alert_type == "prevention":
-        subject = "⚠️ PREVENTION: Potential Overload Detected!"
+    elif alert_type == "Warning":
+        subject = "⚠️ PREVENTION: Potential Electrical Risk Detected!"
         body = f"""PREVENTIVE ACTION RECOMMENDED
 
-POTENTIAL OVERLOAD DEVELOPING!
+POTENTIAL ISSUE DEVELOPING!
 
 Temperature: {reading.temperature_c:.1f}°C
-Current: {reading.current_a:.1f}A
+Current: {reading.current_a:.2f}A
 Hotspot Probability: {risk['hotspot_prob']*100:.1f}%
 Overload Probability: {risk['overload_prob']*100:.1f}%
 {time_to_trip_text}
 
-Action: Reduce load by 15-20%
+Recommended Action: {message_action}
 
 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    
     else:
-        return False, "Unknown alert type"
+        subject = "Breaker System Alert"
+        body = f"""
+BREAKER MONITORING SYSTEM ALERT
+
+Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Temperature: {reading.temperature_c:.1f}°C
+Current: {reading.current_a:.2f}A
+
+Hotspot Risk: {risk['hotspot_prob']*100:.1f}%
+Overload Risk: {risk['overload_prob']*100:.1f}%
+
+Action: {message_action}
+"""
 
     try:
-        msg = Message(
-            subject=subject,
-            sender=app.config['MAIL_USERNAME'],
-            recipients=recipients
-        )
+        msg = Message(subject=subject,
+                      sender=app.config['MAIL_USERNAME'],
+                      recipients=recipients)
+
         msg.body = body
         mail.send(msg)
-        print(f"✓ Email sent: {subject}")
-        return True, "Alert sent"
+
+        print("✓ Email sent:", subject)
+        return True, "Sent"
+
     except Exception as e:
-        print(f"✗ Email error: {e}")
+        print("✗ Email failed:", e)
+        log_fallback_alert(subject, body)
         return False, str(e)
 
 # =========================================================
-# ALERT TRACKING
+# STATE LOGIC (PRESERVED from Version 2)
 # =========================================================
-last_alert_time = {}
-ALERT_COOLDOWN_SECONDS = 300
+def determine_state(hot_prob, ovl_prob):
 
-def should_send_alert(alert_type):
-    current_time = time.time()
-    if alert_type in last_alert_time:
-        if current_time - last_alert_time[alert_type] < ALERT_COOLDOWN_SECONDS:
-            return False
-    last_alert_time[alert_type] = current_time
-    return True
+    if len(temp_buffer_short) < 10 or len(temp_buffer_long) < 10:
+        return "WarmingUp", "System initializing..."
+
+    if hot_prob >= CRITICAL_THRESHOLD:
+        return "Critical", "Severe overheating detected"
+
+    if ovl_prob >= CRITICAL_THRESHOLD:
+        return "Critical", "Severe overload detected"
+
+    if hot_prob >= WARNING_THRESHOLD:
+        return "Warning", "Elevated temperature detected"
+
+    if ovl_prob >= WARNING_THRESHOLD:
+        return "Warning", "High load detected"
+
+    return "Normal", "System stable"
 
 # =========================================================
-# ACTION ENGINE
+# ACTION ENGINE (PRESERVED from Version 2)
 # =========================================================
 def get_action(state, hotspot, overload):
-    """Generate human-readable action based on state"""
+
     if state == "Warning":
+
         if hotspot and overload:
-            return "Reduce load immediately → hotspot + overload detected. Check for loose terminals and wiring."
+            return "Reduce load immediately → hotspot + overload detected. Check wiring."
+
         if hotspot:
-            return "Reduce load and inspect connections → possible loose terminals or oxidation."
+            return "Reduce load and inspect connections."
+
         if overload:
-            return "Turn off heavy appliances → circuit nearing capacity limit."
-        return "Monitor system - elevated readings detected."
+            return "Turn off heavy appliances."
+
+        return "Monitor system."
 
     if state == "Critical":
+
         if hotspot and overload:
-            return "SHUT DOWN SYSTEM → severe heat + overload risk. Inspect breaker immediately."
+            return "SHUT DOWN SYSTEM immediately."
+
         if hotspot:
-            return "SHUT DOWN → overheating likely from poor contact or damaged insulation."
+            return "SHUT DOWN → overheating detected."
+
         if overload:
-            return "DISCONNECT LOAD → overload beyond safe limit."
-        return "Emergency inspection required immediately."
+            return "DISCONNECT LOAD immediately."
 
-    if state == "WarmingUp":
-        return "System initializing - collecting baseline data."
+        return "Emergency inspection required."
 
-    return "System operating normally."
+    return "System normal."
 
 # =========================================================
-# SYSTEM CONFIG
-# =========================================================
-WARMUP_SAMPLES = 10
-WARNING_THRESHOLD = 0.60
-CRITICAL_THRESHOLD = 0.85
-
-# =========================================================
-# API ENDPOINT (Sends REAL data to Supabase)
+# API ENDPOINT (ENHANCED with Supabase + Version 2 features)
 # =========================================================
 @app.route("/api/update", methods=["POST"])
 def update_data():
 
-    global latest_data_store
+    data = request.json
+    temp = float(data["temperature"])
+    current = float(data["current"])
+
+    X = build_basic_features(temp, current)
+    X = X.reindex(columns=FEATURE_COLUMNS, fill_value=0)
+
+    hot_prob = float(hotspot_model.predict_proba(X)[0][1])
+    ovl_prob = float(overload_model.predict_proba(X)[0][1])
+
+    composite_risk = (hot_prob + ovl_prob) / 2  # NEW: For Supabase
+
+    state, status = determine_state(hot_prob, ovl_prob)
+
+    # =====================================================
+    # FORECAST (PRESERVED from Version 2)
+    # =====================================================
+    feat = X
+
+    future_temp = temp
+    future_current = current
 
     try:
-        # RECEIVE DATA from RPi
-        data = request.json
-        temp = float(data["temperature"])
-        current = float(data["current"])
+        future_temp = temp + feat["temp_slope_short"].values[0] * 10
+        future_current = current + feat["current_slope_short"].values[0] * 10
+    except:
+        pass
 
-        # FEATURE ENGINE
-        X = build_basic_features(temp, current)
-        X = X.reindex(columns=FEATURE_COLUMNS, fill_value=0)
+    action = get_action(
+        state,
+        hot_prob >= WARNING_THRESHOLD,
+        ovl_prob >= WARNING_THRESHOLD
+    )
 
-        # ML PREDICTION
-        hot_prob = hotspot_model.predict_proba(X)[0][1]
-        ovl_prob = overload_model.predict_proba(X)[0][1]
+    # =====================================================
+    # TIME-TO-TRIP CALCULATION (NEW: From Version 1)
+    # =====================================================
+    time_to_trip = None
+    if state in ["Warning", "Critical"]:
+        time_to_trip = calculate_time_to_trip(temp, current, hot_prob, ovl_prob)
 
-        composite_risk = (hot_prob + ovl_prob) / 2
+    # =====================================================
+    # ALERTS (ENHANCED with time-to-trip from Version 1)
+    # =====================================================
+    if state in ["Warning", "Critical"]:
+        if should_send_alert(state):
+            send_breaker_alert(
+                reading=type("obj", (), {
+                    "temperature_c": temp,
+                    "current_a": current
+                }),
+                risk={
+                    "hotspot_prob": hot_prob,
+                    "overload_prob": ovl_prob
+                },
+                alert_type=state,
+                message_action=action,
+                time_to_trip=time_to_trip  # NEW: Pass time-to-trip info
+            )
 
-        # =================================================
-        # ENGINEERING STATE LOGIC
-        # =================================================
+    # =====================================================
+    # SEND TO SUPABASE (NEW: From Version 1)
+    # =====================================================
+    supabase_success = send_to_supabase(
+        temp, current, state, 
+        hot_prob, ovl_prob, 
+        composite_risk, action
+    )
 
-        # WARMUP
-        if len(temp_buffer) < WARMUP_SAMPLES:
-            state = "WarmingUp"
-            status = "COLLECTING DATA"
+    # =====================================================
+    # UPDATE LOCAL STORAGE (PRESERVED from Version 2 + Supabase status)
+    # =====================================================
+    latest_data_store.update({
+        "temperature": float(temp),
+        "current": float(current),
+        "state": state,
+        "status": status,
+        "action": action,
+        "supabase_sync": supabase_success,  # NEW: From Version 1
+        "ml": {
+            "hotspot_prob": float(hot_prob),
+            "overload_prob": float(ovl_prob),
+            "composite_risk": float(composite_risk)  # NEW: From Version 1
+        },
+        "forecast": {
+            "future_temp": float(round(future_temp, 2)),
+            "future_current": float(round(future_current, 2))
+        },
+        "time_to_trip": time_to_trip,  # NEW: From Version 1
+        "buffer_size": int(len(temp_buffer_short)),
+        "time": datetime.now().strftime("%H:%M:%S")
+    })
 
-        # CRITICAL
-        elif hot_prob >= CRITICAL_THRESHOLD:
-            state = "Critical"
-            status = "HOTSPOT CRITICAL"
-            
-            if should_send_alert("critical_hotspot"):
-                send_breaker_alert(
-                    reading=type("obj", (object,), {
-                        "temperature_c": temp,
-                        "current_a": current
-                    }),
-                    risk={
-                        "hotspot_prob": hot_prob,
-                        "overload_prob": ovl_prob
-                    },
-                    alert_type="overheating"
-                )
+    print(f"[{state}] T={temp:.2f} I={current:.2f} HP={hot_prob:.2f} OP={ovl_prob:.2f} Supabase={'✓' if supabase_success else '✗'}")
 
-        elif ovl_prob >= CRITICAL_THRESHOLD:
-            state = "Critical"
-            status = "OVERLOAD CRITICAL"
-            
-            if should_send_alert("critical_overload"):
-                send_breaker_alert(
-                    reading=type("obj", (object,), {
-                        "temperature_c": temp,
-                        "current_a": current
-                    }),
-                    risk={
-                        "hotspot_prob": hot_prob,
-                        "overload_prob": ovl_prob
-                    },
-                    alert_type="overheating"
-                )
-
-        # WARNING
-        elif hot_prob >= WARNING_THRESHOLD:
-            state = "Warning"
-            status = "HOTSPOT WARNING"
-            
-            if should_send_alert("warning_hotspot"):
-                send_breaker_alert(
-                    reading=type("obj", (object,), {
-                        "temperature_c": temp,
-                        "current_a": current
-                    }),
-                    risk={
-                        "hotspot_prob": hot_prob,
-                        "overload_prob": ovl_prob
-                    },
-                    alert_type="prevention"
-                )
-
-        elif ovl_prob >= WARNING_THRESHOLD:
-            state = "Warning"
-            status = "OVERLOAD WARNING"
-            
-            if should_send_alert("warning_overload"):
-                send_breaker_alert(
-                    reading=type("obj", (object,), {
-                        "temperature_c": temp,
-                        "current_a": current
-                    }),
-                    risk={
-                        "hotspot_prob": hot_prob,
-                        "overload_prob": ovl_prob
-                    },
-                    alert_type="prevention"
-                )
-
-        # NORMAL
-        else:
-            state = "Normal"
-            status = "SYSTEM NORMAL"
-
-        # Generate action recommendation
-        action = get_action(
-            state,
-            hot_prob >= WARNING_THRESHOLD,
-            ovl_prob >= WARNING_THRESHOLD
-        )
-
-        # SEND TO SUPABASE (REAL DATA)
-        supabase_success = send_to_supabase(
-            temp, current, state, 
-            hot_prob, ovl_prob, 
-            composite_risk, action
-        )
-
-        # STORE DATA locally
-        latest_data_store = {
-            "temperature": round(temp, 2),
-            "current": round(current, 2),
-            "breakerState": state,
-            "status": status,
-            "action": action,
-            "supabase_sync": supabase_success,
-            "ml": {
-                "hotspot_prob": round(float(hot_prob), 4),
-                "overload_prob": round(float(ovl_prob), 4),
-                "composite_risk": round(float(composite_risk), 4)
-            },
-            "buffer_size": len(temp_buffer),
-            "time": datetime.now().strftime("%H:%M:%S")
-        }
-
-        print(
-            f"[{state}] T={temp:.2f}C | I={current:.2f}A | "
-            f"HP={hot_prob:.3f} | OP={ovl_prob:.3f} | Supabase={'✓' if supabase_success else '✗'}"
-        )
-
-        return jsonify({
-            "success": True,
-            "state": state,
-            "status": status,
-            "action": action,
-            "supabase_sync": supabase_success,
-            "ml": {
-                "hotspot_prob": round(float(hot_prob), 4),
-                "overload_prob": round(float(ovl_prob), 4),
-                "composite_risk": round(float(composite_risk), 4)
-            }
-        })
-
-    except Exception as e:
-        print("API ERROR:", e)
-        return jsonify({"success": False, "error": str(e)})
+    return jsonify(latest_data_store)
 
 # =========================================================
-# WEB ROUTES
+# ROUTES (PRESERVED from Version 2 + New Supabase routes)
 # =========================================================
 @app.route("/")
 def index():
@@ -469,12 +446,18 @@ def index():
 def latest():
     return jsonify(latest_data_store)
 
-@app.route("/full_history.html")
-def full_history():
-    return render_template("full_history.html")
+@app.route("/api/health")
+def health():
+    return jsonify({
+        "status": "online",
+        "models_loaded": True,
+        "supabase_connected": supabase is not None,
+        "email_enabled": email_enabled,
+        "buffer_size": len(temp_buffer_short)
+    })
 
 # =========================================================
-# SUPABASE TEST ENDPOINT
+# NEW: SUPABASE TEST ENDPOINT (From Version 1)
 # =========================================================
 @app.route("/api/test-supabase")
 def test_supabase():
@@ -494,30 +477,13 @@ def test_supabase():
         return jsonify({"success": False, "error": str(e)})
 
 # =========================================================
-# HEALTH CHECK
-# =========================================================
-@app.route("/api/health")
-def health():
-    return jsonify({
-        "status": "online",
-        "models_loaded": True,
-        "supabase_connected": supabase is not None,
-        "email_enabled": mail is not None,
-        "buffer_size": len(temp_buffer)
-    })
-
-# =========================================================
 # RUN SERVER
 # =========================================================
 if __name__ == "__main__":
-
-    print("===================================")
-    print("⚡ SMART PANEL MONITORING SYSTEM")
-    print("🔥 Predictive ML Protection Enabled")
-    print("===================================")
+    print("⚡ SMART PANEL SYSTEM ONLINE")
     print(f"📡 Supabase: {'Connected' if supabase else 'Failed'}")
-    print(f"📧 Email: {'Enabled' if mail else 'Disabled'}")
+    print(f"📧 Email: {'Enabled' if email_enabled else 'Disabled'}")
+    print(f"🔮 Forecast: Enabled (Version 2 feature)")
+    print(f"⏱️  Time-to-Trip: Enabled (Version 1 feature)")
     print("===================================")
-    
-    # Run Flask app (no simulator thread - using REAL data from RPi)
     app.run(host="0.0.0.0", port=5000, debug=False)

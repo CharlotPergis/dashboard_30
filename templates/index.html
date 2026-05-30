@@ -120,7 +120,7 @@ body {
   background: #0284c7;
 }
 
-/* Chart Section */
+/* Chart Section - FULL WIDTH CARD with proportional chart */
 .chart-section {
   background: rgba(30, 41, 59, 0.6);
   backdrop-filter: blur(12px);
@@ -128,6 +128,7 @@ body {
   padding: 10px 16px;
   border: 1px solid rgba(14, 165, 233, 0.25);
   flex-shrink: 0;
+  width: 100%;
 }
 .section-title {
   display: flex;
@@ -147,10 +148,11 @@ body {
   border-radius: 10px;
   padding: 6px;
   margin-bottom: 6px;
+  position: relative;
 }
 .trend-chart {
-  width: 100%;
-  height: 100%;
+  width: 100% !important;
+  height: 100% !important;
   display: block;
 }
 .chart-legend {
@@ -565,9 +567,15 @@ let chartData = {
 
 let chart;
 
-// Initialize chart
+// Initialize chart with proportional sizing - fills entire card container
 function initChart() {
     const ctx = document.getElementById('combinedChart').getContext('2d');
+    
+    // Destroy existing chart if any to avoid duplication
+    if (chart) {
+        chart.destroy();
+    }
+    
     chart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -578,8 +586,14 @@ function initChart() {
                     data: [],
                     borderColor: '#0ea5e9',
                     backgroundColor: 'rgba(14, 165, 233, 0.1)',
+                    borderWidth: 2,
                     tension: 0.4,
                     fill: true,
+                    pointRadius: 2,
+                    pointHoverRadius: 4,
+                    pointBackgroundColor: '#0ea5e9',
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 0.8,
                     yAxisID: 'y'
                 },
                 {
@@ -587,8 +601,14 @@ function initChart() {
                     data: [],
                     borderColor: '#facc15',
                     backgroundColor: 'rgba(250, 204, 21, 0.1)',
+                    borderWidth: 2,
                     tension: 0.4,
                     fill: true,
+                    pointRadius: 2,
+                    pointHoverRadius: 4,
+                    pointBackgroundColor: '#facc15',
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 0.8,
                     yAxisID: 'y'
                 },
                 {
@@ -596,8 +616,14 @@ function initChart() {
                     data: [],
                     borderColor: '#ef4444',
                     backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderWidth: 2,
                     tension: 0.4,
                     fill: true,
+                    pointRadius: 2,
+                    pointHoverRadius: 4,
+                    pointBackgroundColor: '#ef4444',
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 0.8,
                     yAxisID: 'y1'
                 },
                 {
@@ -605,24 +631,77 @@ function initChart() {
                     data: [],
                     borderColor: '#a855f7',
                     backgroundColor: 'rgba(168, 85, 247, 0.1)',
+                    borderWidth: 2,
                     tension: 0.4,
                     fill: true,
+                    pointRadius: 2,
+                    pointHoverRadius: 4,
+                    pointBackgroundColor: '#a855f7',
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 0.8,
                     yAxisID: 'y1'
                 }
             ]
         },
         options: {
             responsive: true,
-            maintainAspectRatio: true,
-            interaction: { mode: 'index', intersect: false },
+            maintainAspectRatio: false,
+            resizeDelay: 0,
+            interaction: { 
+                mode: 'index', 
+                intersect: false 
+            },
             plugins: {
                 legend: { display: false },
-                tooltip: { mode: 'index', intersect: false }
+                tooltip: { 
+                    mode: 'index', 
+                    intersect: false,
+                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                    titleColor: '#e2e8f0',
+                    bodyColor: '#cbd5e1',
+                    borderColor: '#0ea5e9',
+                    borderWidth: 1,
+                    padding: 8,
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            let val = context.parsed.y;
+                            if (label.includes('Prob')) {
+                                return `${label}: ${val.toFixed(1)}%`;
+                            }
+                            if (label.includes('Temperature')) {
+                                return `${label}: ${val.toFixed(1)}°C`;
+                            }
+                            if (label.includes('Current')) {
+                                return `${label}: ${val.toFixed(2)}A`;
+                            }
+                            return `${label}: ${val}`;
+                        }
+                    }
+                }
             },
             scales: {
-                y: { title: { display: true, text: 'Temp (°C) / Current (A)', color: '#94a3b8' }, grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
-                y1: { position: 'right', title: { display: true, text: 'Probability (%)', color: '#94a3b8' }, grid: { drawOnChartArea: false }, ticks: { color: '#94a3b8', callback: (v) => v + '%' } },
-                x: { ticks: { color: '#94a3b8', maxRotation: 45, autoSkip: true, maxTicksLimit: 8 } }
+                y: { 
+                    title: { display: true, text: 'Temp (°C) / Current (A)', color: '#94a3b8', font: { size: 9 } }, 
+                    grid: { color: '#334155' }, 
+                    ticks: { color: '#94a3b8', stepSize: 20 } 
+                },
+                y1: { 
+                    position: 'right', 
+                    title: { display: true, text: 'Probability (%)', color: '#94a3b8', font: { size: 9 } }, 
+                    grid: { drawOnChartArea: false }, 
+                    ticks: { color: '#94a3b8', callback: (v) => v + '%', stepSize: 20, max: 100, min: 0 } 
+                },
+                x: { 
+                    ticks: { color: '#94a3b8', maxRotation: 45, autoSkip: true, maxTicksLimit: 8, font: { size: 8 } },
+                    grid: { display: false }
+                }
+            },
+            elements: {
+                line: {
+                    borderJoin: 'round',
+                    borderCap: 'round'
+                }
             }
         }
     });
@@ -667,18 +746,18 @@ async function fetchRealData() {
             document.getElementById('system-status-header').textContent = 'LIVE RPi';
             document.getElementById('system-status-header').style.color = '#22c55e';
             
-            // Update chart
+            // Update chart - ensure chart fills entire container width
             if (data.temperature && data.current && data.ml) {
                 const now = new Date();
-                const timeStr = now.toLocaleTimeString();
+                const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit', second:'2-digit' });
                 
-                chartData.temperatures.push(data.temperature);
-                chartData.currents.push(data.current);
-                chartData.hotspots.push(data.ml.hotspot_prob * 100);
-                chartData.overloads.push(data.ml.overload_prob * 100);
+                chartData.temperatures.push(parseFloat(data.temperature.toFixed(1)));
+                chartData.currents.push(parseFloat(data.current.toFixed(2)));
+                chartData.hotspots.push(parseFloat((data.ml.hotspot_prob * 100).toFixed(1)));
+                chartData.overloads.push(parseFloat((data.ml.overload_prob * 100).toFixed(1)));
                 chartData.timestamps.push(timeStr);
                 
-                // Keep last 20 points
+                // Keep last 20 points for clear trend
                 if (chartData.temperatures.length > 20) {
                     chartData.temperatures.shift();
                     chartData.currents.shift();
@@ -697,7 +776,7 @@ async function fetchRealData() {
     }
 }
 
-// Update chart
+// Update chart with proper sizing
 function updateChart() {
     if (chart) {
         chart.data.labels = chartData.timestamps;
@@ -717,10 +796,16 @@ async function fetchRecentEvents() {
         
         if (data && data.temperature !== undefined) {
             const tbody = document.getElementById('log-body');
+            // Remove empty placeholder if it exists
+            if (tbody.children.length === 1 && tbody.children[0].innerText.includes('Waiting for RPi sensor data')) {
+                tbody.innerHTML = '';
+            }
             const row = document.createElement('tr');
             
             const stateClass = data.breakerState === 'Normal' ? 'status-normal' : 
                               (data.breakerState === 'Warning' ? 'status-warning' : 'status-critical');
+            
+            const actionShort = data.action ? (data.action.length > 30 ? data.action.substring(0, 28) + '...' : data.action) : 'Monitoring';
             
             row.innerHTML = `
                 <td>${data.time || new Date().toLocaleTimeString()}</td>
@@ -729,7 +814,7 @@ async function fetchRecentEvents() {
                 <td>${data.ml ? ((data.ml.hotspot_prob * 100).toFixed(1)) : '0'}%</td>
                 <td>${data.ml ? ((data.ml.overload_prob * 100).toFixed(1)) : '0'}%</td>
                 <td class="${stateClass}">${data.breakerState || data.state || 'Unknown'}</td>
-                <td>${data.action ? data.action.substring(0, 30) + '...' : 'Monitoring'}</td>
+                <td style="max-width: 110px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${data.action || ''}">${actionShort}</td>
             `;
             
             tbody.insertBefore(row, tbody.firstChild);
@@ -744,6 +829,13 @@ async function fetchRecentEvents() {
     }
 }
 
+// Handle window resize to ensure chart always fits proportionally
+function handleResize() {
+    if (chart) {
+        chart.resize();
+    }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     initChart();
@@ -754,6 +846,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initial fetch
     fetchRealData();
+    
+    // Add resize listener to maintain proportional chart sizing
+    window.addEventListener('resize', handleResize);
 });
 </script>
 </body>
