@@ -304,7 +304,7 @@ def get_action(state, hotspot, overload):
     return "System normal."
 
 # =========================================================
-# API ENDPOINT (Without time-to-trip)
+# API ENDPOINT (FIXED - with buffer management)
 # =========================================================
 @app.route("/api/update", methods=["POST"])
 def update_data():
@@ -312,22 +312,49 @@ def update_data():
     data = request.json
     temp = float(data["temperature"])
     current = float(data["current"])
+    
+    # DEBUG: Print what RPi is sending
+    print(f"\n📡 RPi SENSOR DATA - Temp: {temp}°C, Current: {current}A")
 
+    # CRITICAL FIX: Manually update buffers before feature extraction
+    # This ensures historical data is available for slope calculations
+    temp_buffer_short.append(temp)
+    temp_buffer_long.append(temp)
+    current_buffer_short.append(current)
+    current_buffer_long.append(current)
+    
+    # DEBUG: Show buffer status
+    print(f"📊 Buffer sizes - Temp short: {len(temp_buffer_short)}/{temp_buffer_short.maxlen}, Temp long: {len(temp_buffer_long)}/{temp_buffer_long.maxlen}")
+    if len(temp_buffer_short) > 0:
+        print(f"📊 Recent temps (last 5): {list(temp_buffer_short)[-5:]}")
+        print(f"📊 Recent currents (last 5): {list(current_buffer_short)[-5:]}")
+    
     # =========================
     # HOTSPOT MODEL INPUT (Version 2)
     # =========================
     X_hot = build_hotspot_X(temp, current)
-    hot_prob = float(hotspot_model.predict_proba(X_hot)[0][1])
+    
+    # DEBUG: Show model prediction
+    hot_prob_raw = float(hotspot_model.predict_proba(X_hot)[0][1])
+    print(f"🔥 Hotspot RAW model output: {hot_prob_raw:.4f}")
+    
+    hot_prob = hot_prob_raw
 
     # =========================
     # OVERLOAD MODEL INPUT (Version 2)
     # =========================
     X_ovr = build_overload_X(temp, current)
-    ovl_prob = float(overload_model.predict_proba(X_ovr)[0][1])
+    ovl_prob_raw = float(overload_model.predict_proba(X_ovr)[0][1])
+    
+    # DEBUG: Show model prediction
+    print(f"⚡ Overload RAW model output: {ovl_prob_raw:.4f}")
+    
+    ovl_prob = ovl_prob_raw
     
     # Version 2 current adjustment
     if current < 16:
-        ovl_prob *= 0.5
+        ovl_prob = ovl_prob_raw * 0.5
+        print(f"⚡ Overload probability (adjusted for low current): {ovl_prob:.4f}")
     
     # Composite risk calculation (Version 1)
     composite_risk = (hot_prob + ovl_prob) / 2
@@ -341,32 +368,39 @@ def update_data():
             float(X_hot["temp_slope_long"].iloc[0]) * 0.3
         )
         future_temp = temp + slope1 * 10
-    except Exception:
+        print(f"📈 Temperature trend slope: {slope1:.4f} → 10-step forecast: {future_temp:.2f}°C")
+    except Exception as e:
+        print(f"⚠ Temperature forecast error: {e}")
         future_temp = temp
 
     try:
         slope = float(X_ovr["current_slope_short"].iloc[0])
-    except:
+        future_current = current + slope * 10
+        print(f"📈 Current trend slope: {slope:.4f} → 10-step forecast: {future_current:.2f}A")
+    except Exception as e:
+        print(f"⚠ Current forecast error: {e}")
         slope = 0.0
-
-    future_current = current + slope * 10
+        future_current = current
 
     # =========================
     # STATE (Version 2)
     # =========================
     state, status = determine_state(hot_prob, ovl_prob)
+    print(f"🎯 System State: {state} - {status}")
 
     action = get_action(
         state,
         hot_prob >= WARNING_THRESHOLD,
         ovl_prob >= WARNING_THRESHOLD
     )
+    print(f"💡 Recommended Action: {action}")
 
     # =========================
     # ALERTS (Without time-to-trip)
     # =========================
     if state in ["Warning", "Critical"]:
         if should_send_alert(state):
+            print(f"📧 Sending {state} alert...")
             send_breaker_alert(
                 reading=type("obj", (), {
                     "temperature_c": temp,
@@ -379,6 +413,8 @@ def update_data():
                 alert_type=state,
                 message_action=action
             )
+        else:
+            print(f"⏰ {state} alert suppressed (cooldown active)")
 
     # =========================
     # SEND TO SUPABASE (Version 1)
@@ -402,7 +438,9 @@ def update_data():
         "ml": {
             "hotspot_prob": float(hot_prob),
             "overload_prob": float(ovl_prob),
-            "composite_risk": float(composite_risk)
+            "composite_risk": float(composite_risk),
+            "hotspot_raw": float(hot_prob_raw),  # Debug info
+            "overload_raw": float(ovl_prob_raw)   # Debug info
         },
         "forecast": {
             "future_temp": float(round(future_temp, 2)),
@@ -412,9 +450,51 @@ def update_data():
         "time": datetime.now().strftime("%H:%M:%S")
     })
 
-    print(f"[{state}] T={temp:.2f} I={current:.2f} HP={hot_prob:.2f} OP={ovl_prob:.2f} Supabase={'✓' if supabase_success else '✗'}")
+    print(f"✅ FINAL: [{state}] T={temp:.2f}°C I={current:.2f}A HP={hot_prob:.3f} OP={ovl_prob:.3f} Supabase={'✓' if supabase_success else '✗'}")
+    print("="*70)
 
     return jsonify(latest_data_store)
+
+# =========================================================
+# TEST ENDPOINT - To verify model works with different inputs
+# =========================================================
+@app.route("/api/test-model", methods=["GET"])
+def test_model():
+    """Test model with different temperature/current values to verify it changes"""
+    test_cases = [
+        {"temp": 25.0, "current": 5.0, "desc": "Normal - Cool"},
+        {"temp": 35.0, "current": 10.0, "desc": "Normal - Warm"},
+        {"temp": 45.0, "current": 15.0, "desc": "Warning - Hot"},
+        {"temp": 65.0, "current": 20.0, "desc": "Critical - Very Hot"},
+        {"temp": 85.0, "current": 30.0, "desc": "Critical - Extreme"},
+    ]
+    
+    results = []
+    for test in test_cases:
+        # Manually update buffers for this test
+        temp_buffer_short.append(test["temp"])
+        temp_buffer_long.append(test["temp"])
+        current_buffer_short.append(test["current"])
+        current_buffer_long.append(test["current"])
+        
+        X_hot = build_hotspot_X(test["temp"], test["current"])
+        hot_prob = float(hotspot_model.predict_proba(X_hot)[0][1])
+        
+        X_ovr = build_overload_X(test["temp"], test["current"])
+        ovl_prob = float(overload_model.predict_proba(X_ovr)[0][1])
+        
+        results.append({
+            "scenario": test["desc"],
+            "temperature": test["temp"],
+            "current": test["current"],
+            "hotspot_probability": round(hot_prob, 4),
+            "overload_probability": round(ovl_prob, 4)
+        })
+    
+    return jsonify({
+        "message": "Test results - Model should show DIFFERENT probabilities for different inputs",
+        "test_results": results
+    })
 
 # =========================================================
 # ROUTES (Version 2 + New Supabase routes)
@@ -453,8 +533,18 @@ def health():
         "models_loaded": True,
         "supabase_connected": supabase is not None,
         "email_enabled": email_enabled,
-        "buffer_size": len(temp_buffer_short)
+        "buffer_size": len(temp_buffer_short),
+        "buffer_max": temp_buffer_short.maxlen if temp_buffer_short else 0
     })
+
+# =========================================================
+# RESET BUFFERS ENDPOINT
+# =========================================================
+@app.route("/api/reset-buffers", methods=["POST"])
+def reset_buffers_endpoint():
+    """Reset all buffers - useful for testing"""
+    reset_buffers()
+    return jsonify({"success": True, "message": "Buffers reset"})
 
 # =========================================================
 # SUPABASE TEST ENDPOINT (Version 1)
@@ -515,5 +605,8 @@ if __name__ == "__main__":
     print(f"📊 History API: Enabled at /api/history")
     print(f"📄 History Page: Enabled at /full_history.html")
     print(f"⚡ Thresholds: Warning={WARNING_THRESHOLD}, Critical={CRITICAL_THRESHOLD}")
+    print(f"📊 Buffer size: {temp_buffer_short.maxlen if temp_buffer_short else 10}")
     print("===================================")
+    print("\n💡 TIP: Use /api/test-model to verify model responds to different inputs")
+    print("💡 TIP: Watch the console logs to see real-time probability calculations\n")
     app.run(host="0.0.0.0", port=5000, debug=False)
