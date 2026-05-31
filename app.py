@@ -67,17 +67,6 @@ except Exception as e:
     print("⚠ Email alerts disabled — system continues normally")
 
 # =========================================================
-# LOAD MODELS
-# =========================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-hotspot_model = joblib.load(os.path.join(BASE_DIR, "ml/hotspot_model.pkl"))
-overload_model = joblib.load(os.path.join(BASE_DIR, "ml/overload_model.pkl"))
-
-HOTSPOT_FEATURES = hotspot_model.feature_names_in_.tolist()
-OVERLOAD_FEATURES = overload_model.feature_names_in_.tolist()
-
-# =========================================================
 # THRESHOLDS (Version 2 thresholds preserved)
 # =========================================================
 WARMUP_SAMPLES = 10
@@ -237,19 +226,6 @@ Overload Risk: {risk['overload_prob']*100:.1f}%
         return False, str(e)
 
 # =========================================================
-# FEATURE BUILDER WRAPPER (Version 2)
-# =========================================================
-def build_hotspot_X(temp, current):
-    feat = build_basic_features(temp, current)
-    feat = feat.reindex(columns=HOTSPOT_FEATURES, fill_value=0)
-    return feat
-
-def build_overload_X(temp, current):
-    feat = build_basic_features(temp, current)
-    feat = feat.reindex(columns=OVERLOAD_FEATURES, fill_value=0)
-    return feat
-
-# =========================================================
 # STATE LOGIC (Version 2 preserved)
 # =========================================================
 def determine_state(hot_prob, ovl_prob):
@@ -305,7 +281,7 @@ def get_action(state, hotspot, overload):
     return "System normal."
 
 # =========================================================
-# API ENDPOINT (FIXED - with buffer management)
+# API ENDPOINT - UPDATED TO USE PROBABILITIES FROM RPi
 # =========================================================
 @app.route("/api/update", methods=["POST"])
 def update_data():
@@ -319,6 +295,22 @@ def update_data():
     print(f"📡 RPi RAW DATA RECEIVED:")
     print(f"   Temperature: {temp}°C")
     print(f"   Current: {current}A")
+    
+    # ============================================
+    # USE PROBABILITIES COMING DIRECTLY FROM RPi
+    # ============================================
+    
+    # Get probabilities from RPi payload
+    # Your RPi should send: {"temperature": xx, "current": xx, "hotspot_prob": xx, "overload_prob": xx}
+    hot_prob = float(data["hotspot_prob"])
+    ovl_prob = float(data["overload_prob"])
+    
+    # Store raw values for debugging
+    hot_prob_raw = hot_prob
+    ovl_prob_raw = ovl_prob
+    
+    print(f"🔥 RPi Hotspot Probability: {hot_prob:.4f} ({hot_prob*100:.1f}%)")
+    print(f"⚡ RPi Overload Probability: {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
     print(f"{'='*60}")
     # ==============================================
 
@@ -336,57 +328,14 @@ def update_data():
         print(f"📊 Recent currents (last 5): {list(current_buffer_short)[-5:]}")
     
     # =========================
-    # HOTSPOT MODEL INPUT (Version 2)
+    # SIMPLE FORECAST (No ML models needed)
     # =========================
-    X_hot = build_hotspot_X(temp, current)
-    
-    # DEBUG: Show model prediction
-    hot_prob_raw = float(hotspot_model.predict_proba(X_hot)[0][1])
-    print(f"🔥 Hotspot RAW model output: {hot_prob_raw:.4f} ({hot_prob_raw*100:.1f}%)")
-    
-    hot_prob = hot_prob_raw
-
+    future_temp = temp
+    future_current = current
     # =========================
-    # OVERLOAD MODEL INPUT (Version 2)
-    # =========================
-    X_ovr = build_overload_X(temp, current)
-    ovl_prob_raw = float(overload_model.predict_proba(X_ovr)[0][1])
     
-    # DEBUG: Show model prediction
-    print(f"⚡ Overload RAW model output: {ovl_prob_raw:.4f} ({ovl_prob_raw*100:.1f}%)")
-    
-    ovl_prob = ovl_prob_raw
-    
-    # Version 2 current adjustment
-    if current < 16:
-        ovl_prob = ovl_prob_raw * 0.5
-        print(f"⚡ Overload probability (adjusted for low current): {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
-    
-    # Composite risk calculation (Version 1)
+    # Composite risk calculation
     composite_risk = (hot_prob + ovl_prob) / 2
-
-    # =========================
-    # SAFE FORECAST BLOCK (Version 2)
-    # =========================
-    try:
-        slope1 = (
-            float(X_hot["temp_slope_short"].iloc[0]) * 0.7 +
-            float(X_hot["temp_slope_long"].iloc[0]) * 0.3
-        )
-        future_temp = temp + slope1 * 10
-        print(f"📈 Temperature trend slope: {slope1:.4f} → 10-step forecast: {future_temp:.2f}°C")
-    except Exception as e:
-        print(f"⚠ Temperature forecast error: {e}")
-        future_temp = temp
-
-    try:
-        slope = float(X_ovr["current_slope_short"].iloc[0])
-        future_current = current + slope * 10
-        print(f"📈 Current trend slope: {slope:.4f} → 10-step forecast: {future_current:.2f}A")
-    except Exception as e:
-        print(f"⚠ Current forecast error: {e}")
-        slope = 0.0
-        future_current = current
 
     # =========================
     # STATE (Version 2)
@@ -438,7 +387,7 @@ def update_data():
         "temperature": float(temp),
         "current": float(current),
         "state": state,
-        "breakerState": state,  # Add this for dashboard compatibility
+        "breakerState": state,
         "status": status,
         "action": action,
         "supabase_sync": supabase_success,
@@ -446,8 +395,8 @@ def update_data():
             "hotspot_prob": float(hot_prob),
             "overload_prob": float(ovl_prob),
             "composite_risk": float(composite_risk),
-            "hotspot_raw": float(hot_prob_raw),  # Debug info
-            "overload_raw": float(ovl_prob_raw)   # Debug info
+            "hotspot_raw": float(hot_prob_raw),
+            "overload_raw": float(ovl_prob_raw)
         },
         "forecast": {
             "future_temp": float(round(future_temp, 2)),
@@ -464,72 +413,26 @@ def update_data():
     return jsonify(latest_data_store)
 
 # =========================================================
-# TEST ENDPOINT - To verify model works with different inputs
-# =========================================================
-@app.route("/api/test-model", methods=["GET"])
-def test_model():
-    """Test model with different temperature/current values to verify it changes"""
-    test_cases = [
-        {"temp": 25.0, "current": 5.0, "desc": "Normal - Cool"},
-        {"temp": 35.0, "current": 10.0, "desc": "Normal - Warm"},
-        {"temp": 45.0, "current": 15.0, "desc": "Warning - Hot"},
-        {"temp": 65.0, "current": 20.0, "desc": "Critical - Very Hot"},
-        {"temp": 85.0, "current": 30.0, "desc": "Critical - Extreme"},
-    ]
-    
-    results = []
-    for test in test_cases:
-        # Manually update buffers for this test
-        temp_buffer_short.append(test["temp"])
-        temp_buffer_long.append(test["temp"])
-        current_buffer_short.append(test["current"])
-        current_buffer_long.append(test["current"])
-        
-        X_hot = build_hotspot_X(test["temp"], test["current"])
-        hot_prob = float(hotspot_model.predict_proba(X_hot)[0][1])
-        
-        X_ovr = build_overload_X(test["temp"], test["current"])
-        ovl_prob = float(overload_model.predict_proba(X_ovr)[0][1])
-        
-        results.append({
-            "scenario": test["desc"],
-            "temperature": test["temp"],
-            "current": test["current"],
-            "hotspot_probability": round(hot_prob, 4),
-            "hotspot_percent": round(hot_prob * 100, 1),
-            "overload_probability": round(ovl_prob, 4),
-            "overload_percent": round(ovl_prob * 100, 1)
-        })
-    
-    return jsonify({
-        "message": "Test results - Model should show DIFFERENT probabilities for different inputs",
-        "test_results": results
-    })
-
-# =========================================================
-# ROUTES (Version 2 + New Supabase routes)
+# ROUTES
 # =========================================================
 @app.route("/")
 def index():
     return render_template("index.html")
 
 # =========================================================
-# FULL HISTORY PAGE ROUTE (ADD THIS)
+# FULL HISTORY PAGE ROUTE
 # =========================================================
 @app.route("/full_history.html")
 def full_history_page():
     """Render the full history page"""
     return render_template("full_history.html")
 
-# Alternative history routes (optional but helpful)
 @app.route("/history")
 def history_page():
-    """Redirect or render history page"""
     return render_template("full_history.html")
 
 @app.route("/logs")
 def logs_page():
-    """Redirect or render history page"""
     return render_template("full_history.html")
 
 @app.route("/api/latest-data")
@@ -549,7 +452,6 @@ def latest():
             "time": datetime.now().strftime("%H:%M:%S")
         })
     
-    # Ensure breakerState exists for dashboard
     response_data = dict(latest_data_store)
     if 'breakerState' not in response_data:
         response_data['breakerState'] = response_data.get('state', 'Normal')
@@ -561,7 +463,6 @@ def latest():
 def health():
     return jsonify({
         "status": "online",
-        "models_loaded": True,
         "supabase_connected": supabase is not None,
         "email_enabled": email_enabled,
         "buffer_size": len(temp_buffer_short),
@@ -569,26 +470,17 @@ def health():
         "latest_data_available": bool(latest_data_store and len(latest_data_store) > 0)
     })
 
-# =========================================================
-# RESET BUFFERS ENDPOINT
-# =========================================================
 @app.route("/api/reset-buffers", methods=["POST"])
 def reset_buffers_endpoint():
-    """Reset all buffers - useful for testing"""
     reset_buffers()
     return jsonify({"success": True, "message": "Buffers reset"})
 
-# =========================================================
-# SUPABASE TEST ENDPOINT (Version 1)
-# =========================================================
 @app.route("/api/test-supabase")
 def test_supabase():
-    """Test Supabase connection"""
     if supabase is None:
         return jsonify({"success": False, "error": "Supabase not initialized"})
     
     try:
-        # Try to fetch the last 5 records
         response = supabase.table("breaker_readings").select("*").limit(5).execute()
         return jsonify({
             "success": True,
@@ -598,23 +490,13 @@ def test_supabase():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
-# =========================================================
-# HISTORY API ENDPOINTS (Full History Feature)
-# =========================================================
-
 @app.route("/api/history")
 def get_full_history():
-    """Get all historical readings from Supabase"""
     if supabase is None:
         return jsonify({"success": False, "error": "Supabase not connected", "data": []}), 500
     
     try:
-        # Get all readings, most recent first
-        response = supabase.table("breaker_readings")\
-            .select("*")\
-            .order("created_at", desc=True)\
-            .execute()
-        
+        response = supabase.table("breaker_readings").select("*").order("created_at", desc=True).execute()
         if response and hasattr(response, 'data'):
             return jsonify({
                 "success": True,
@@ -626,12 +508,8 @@ def get_full_history():
         print(f"History error: {e}")
         return jsonify({"success": False, "error": str(e), "data": []}), 500
 
-# =========================================================
-# DEBUG ENDPOINT - Check what data is stored
-# =========================================================
 @app.route("/api/debug")
 def debug():
-    """Debug endpoint to see current data"""
     return jsonify({
         "latest_data_store": latest_data_store,
         "has_data": bool(latest_data_store and len(latest_data_store) > 0),
@@ -640,8 +518,7 @@ def debug():
             "temp_long": len(temp_buffer_long),
             "current_short": len(current_buffer_short),
             "current_long": len(current_buffer_long)
-        },
-        "models_loaded": True
+        }
     })
 
 # =========================================================
@@ -651,16 +528,13 @@ if __name__ == "__main__":
     print("⚡ SMART PANEL SYSTEM ONLINE")
     print(f"📡 Supabase: {'Connected' if supabase else 'Failed'}")
     print(f"📧 Email: {'Enabled' if email_enabled else 'Disabled'}")
-    print(f"🔮 Forecast: Enabled (Version 2 feature)")
     print(f"📊 History API: Enabled at /api/history")
     print(f"📄 History Page: Enabled at /full_history.html")
     print(f"⚡ Thresholds: Warning={WARNING_THRESHOLD}, Critical={CRITICAL_THRESHOLD}")
     print(f"📊 Buffer size: {temp_buffer_short.maxlen if temp_buffer_short else 10}")
     print("===================================")
     print("\n⏳ Waiting for Raspberry Pi to connect...")
+    print("📡 Expecting RPi to send: temperature, current, hotspot_prob, overload_prob")
     print("🌐 Dashboard available at: http://localhost:5000")
-    print("💡 TIP: Use /api/test-model to verify model responds to different inputs")
-    print("💡 TIP: Watch the console logs to see real-time probability calculations")
-    print("💡 TIP: Use /api/debug to check current data state")
     print("="*50)
     app.run(host="0.0.0.0", port=5000, debug=False)

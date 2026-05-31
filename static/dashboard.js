@@ -1,11 +1,10 @@
-// Breaker Monitoring Dashboard JS
-const SIMULATION_MODE = true;
-let simulationInterval = null;
+// Breaker Monitoring Dashboard JS - REAL RPi DATA ONLY (NO SIMULATION)
 
 let timeLabels = [], tempData = [], currentData = [], hotspotData = [], overloadData = [];
 const MAX_HISTORY = 20;
 let historyData = [];
 let combinedCtx;
+let fetchInterval = null;
 
 function initCombinedChart() {
     const canvas = document.getElementById("combinedChart");
@@ -32,7 +31,7 @@ function drawCombinedChart() {
         combinedCtx.font = "12px Inter";
         combinedCtx.fillStyle = "#94a3b8";
         combinedCtx.textAlign = "center";
-        combinedCtx.fillText("Waiting for data...", width / 2, height / 2);
+        combinedCtx.fillText("Waiting for RPi data...", width / 2, height / 2);
         return;
     }
     
@@ -70,30 +69,19 @@ function drawLine(data, normalizeFn, color, lineWidth, width, height) {
     ctx.stroke();
 }
 
-function generateMockData() {
-    let temp = 20 + Math.random() * 30;
-    let current = 10 + Math.random() * 25;
-    const randomEvent = Math.random();
-    if (randomEvent < 0.05) { temp = 80 + Math.random() * 15; current = 42 + Math.random() * 10; }
-    else if (randomEvent < 0.12) { temp = 68 + Math.random() * 12; current = 36 + Math.random() * 8; }
-    else if (randomEvent < 0.20) { temp = 55 + Math.random() * 10; current = 30 + Math.random() * 6; }
-    
-    let state = "Normal", status = "✅ System normal";
-    if (temp > 80 || current > 45) { state = "Overheating"; status = "🔥 CRITICAL!"; }
-    else if (temp > 70 || current > 38) { state = "Overload"; status = "🔴 Overload detected"; }
-    else if (temp > 60 || current > 32) { state = "Potential Overload"; status = "⚠️ Warning"; }
-    
-    const hotspotProb = Math.min(0.95, Math.max(0.05, (temp - 50) / 40));
-    const overloadProb = Math.min(0.95, Math.max(0.05, (current - 25) / 25));
-    
-    return { temperature: Math.round(temp * 10) / 10, current: Math.round(current * 100) / 100, breakerState: state, status: status, ml: { hotspot_prob: Math.round(hotspotProb * 1000) / 1000, overload_prob: Math.round(overloadProb * 1000) / 1000 } };
-}
-
 function saveToLocalStorage() {
     if (timeLabels.length === 0) return;
     try {
         let fullHistory = JSON.parse(localStorage.getItem("breakerFullHistory") || "[]");
-        fullHistory.unshift({ timestamp: new Date().toISOString(), timeDisplay: timeLabels[timeLabels.length - 1], temperature: tempData[tempData.length - 1], current: currentData[currentData.length - 1], breakerState: getBreakerStateFromData(tempData[tempData.length - 1], currentData[currentData.length - 1]), hotspot_probability: hotspotData[hotspotData.length - 1], overload_probability: overloadData[overloadData.length - 1] });
+        fullHistory.unshift({ 
+            timestamp: new Date().toISOString(), 
+            timeDisplay: timeLabels[timeLabels.length - 1], 
+            temperature: tempData[tempData.length - 1], 
+            current: currentData[currentData.length - 1], 
+            breakerState: getBreakerStateFromData(tempData[tempData.length - 1], currentData[currentData.length - 1]), 
+            hotspot_probability: hotspotData[hotspotData.length - 1], 
+            overload_probability: overloadData[overloadData.length - 1] 
+        });
         if (fullHistory.length > 1000) fullHistory = fullHistory.slice(0, 1000);
         localStorage.setItem("breakerFullHistory", JSON.stringify(fullHistory));
     } catch (err) { console.error("Save error:", err); }
@@ -110,11 +98,10 @@ function renderHistoryTable() {
     const logBody = document.getElementById("log-body");
     if (!logBody) return;
     if (historyData.length === 0) { 
-        logBody.innerHTML = `<tr><td colspan="7" class="empty-state">Waiting for data...</td></tr>`; 
+        logBody.innerHTML = `<tr><td colspan="7" class="empty-state">Waiting for RPi data...</td></tr>`; 
         return; 
     }
     
-    // FIXED: Show ALL rows with NO limit
     logBody.innerHTML = historyData.map(entry => {
         let statusText = "", statusClass = "";
         if (entry.breakerState === "Normal") { statusText = "✅ Normal"; statusClass = "status-normal"; }
@@ -131,16 +118,9 @@ function renderHistoryTable() {
                     <td class="${statusClass}">${statusText}</td>
                 </tr>`;
     }).join('');
-    
-    // Force all rows to be visible
-    const rows = logBody.querySelectorAll('tr');
-    rows.forEach(row => {
-        row.style.display = 'table-row';
-    });
 }
 
 function addToHistory(data) {
-    // FIXED: Remove the limit - keep ALL rows (no pop)
     historyData.unshift({ 
         time: new Date().toLocaleTimeString(), 
         temperature: data.temperature, 
@@ -150,12 +130,22 @@ function addToHistory(data) {
         overloadProb: data.ml?.overload_prob || 0 
     });
     
-    // REMOVED THE 8-ROW LIMIT - Now keeping ALL rows
-    // Old code: if (historyData.length > 8) historyData.pop();
-    // New: Keep all rows, no limit
-    
     renderHistoryTable();
     saveToLocalStorage();
+}
+
+// Fetch REAL data from Flask server
+async function fetchRealData() {
+    try {
+        const response = await fetch('/api/latest-data?_=' + Date.now());
+        const data = await response.json();
+        
+        if (data && data.temperature !== undefined && data.temperature !== null) {
+            updateDashboard(data);
+        }
+    } catch (error) {
+        console.error('Error fetching RPi data:', error);
+    }
 }
 
 function updateDashboard(data) {
@@ -165,34 +155,34 @@ function updateDashboard(data) {
     tempData.push(data.temperature);
     currentData.push(data.current);
     
-    let hotspotProb = data.ml?.hotspot_prob || Math.min(1, Math.max(0, (data.temperature - 60) / 40));
-    let overloadProb = data.ml?.overload_prob || Math.min(1, Math.max(0, (data.current - 30) / 20));
+    let hotspotProb = data.ml?.hotspot_prob || 0;
+    let overloadProb = data.ml?.overload_prob || 0;
     hotspotData.push(hotspotProb);
     overloadData.push(overloadProb);
     
-    const percentHotspot = (hotspotProb * 100).toFixed(0);
-    const percentOverload = (overloadProb * 100).toFixed(0);
+    const percentHotspot = (hotspotProb * 100).toFixed(1);
+    const percentOverload = (overloadProb * 100).toFixed(1);
     document.getElementById("hotspot-value").textContent = percentHotspot + "%";
     document.getElementById("hotspot-bar").style.width = percentHotspot + "%";
     document.getElementById("overload-value").textContent = percentOverload + "%";
     document.getElementById("overload-bar").style.width = percentOverload + "%";
     document.getElementById("temperature-value").textContent = data.temperature.toFixed(1);
-    document.getElementById("current-value").textContent = data.current.toFixed(1);
-    document.getElementById("breaker-state").textContent = data.breakerState;
-    document.getElementById("breaker-state").className = `breaker-state-text ${data.breakerState}`;
+    document.getElementById("current-value").textContent = data.current.toFixed(2);
+    document.getElementById("breaker-state").textContent = data.breakerState || data.state;
+    document.getElementById("breaker-state").className = `breaker-state-text ${data.breakerState || data.state}`;
     
     const suggestionMain = document.getElementById("suggestion-main");
     const actionText = document.getElementById("action-text");
     const riskBadge = document.getElementById("risk-badge-container");
-    if (data.breakerState === "Overheating") {
+    if (data.breakerState === "Overheating" || data.state === "Critical") {
         suggestionMain.innerHTML = "🔥 CRITICAL: IMMEDIATE SHUTDOWN REQUIRED!";
         actionText.textContent = "EMERGENCY: Isolate circuit NOW!";
         riskBadge.innerHTML = '<span class="risk-badge critical">⚠️ CRITICAL RISK</span>';
-    } else if (data.breakerState === "Overload") {
+    } else if (data.breakerState === "Overload" || data.state === "Critical") {
         suggestionMain.innerHTML = "⚠️ OVERLOAD DETECTED - Reduce load immediately!";
         actionText.textContent = "Reduce connected load by 30-40%";
         riskBadge.innerHTML = '<span class="risk-badge high">🔴 HIGH RISK</span>';
-    } else if (data.breakerState === "Potential Overload") {
+    } else if (data.breakerState === "Potential Overload" || data.state === "Warning") {
         suggestionMain.innerHTML = "⚡ Potential overload developing - Take preventive action";
         actionText.textContent = "Reduce load by 15-20%";
         riskBadge.innerHTML = '<span class="risk-badge medium">🟡 MODERATE RISK</span>';
@@ -202,17 +192,20 @@ function updateDashboard(data) {
         riskBadge.innerHTML = '<span class="risk-badge low">🟢 LOW RISK</span>';
     }
     
-    if (timeLabels.length > MAX_HISTORY) { timeLabels.shift(); tempData.shift(); currentData.shift(); hotspotData.shift(); overloadData.shift(); }
+    if (timeLabels.length > MAX_HISTORY) { 
+        timeLabels.shift(); 
+        tempData.shift(); 
+        currentData.shift(); 
+        hotspotData.shift(); 
+        overloadData.shift(); 
+    }
     drawCombinedChart();
     addToHistory(data);
 }
 
-function startSimulation() {
-    updateDashboard(generateMockData());
-    simulationInterval = setInterval(() => updateDashboard(generateMockData()), 2000);
-}
-
+// Start fetching REAL data (NO simulation)
 window.addEventListener("load", () => {
     initCombinedChart();
-    startSimulation();
+    fetchRealData();  // Initial fetch
+    fetchInterval = setInterval(fetchRealData, 2000);  // Fetch every 2 seconds
 });
