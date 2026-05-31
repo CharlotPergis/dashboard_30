@@ -5,15 +5,16 @@ import time
 from flask_cors import CORS
 from flask_mail import Mail, Message
 from datetime import datetime
-from supabase import create_client  # NEW: From Version 1
-import threading  # NEW: From Version 1
+from supabase import create_client
+import threading
 
 from feature_engine import (
     build_basic_features,
     temp_buffer_short,
     temp_buffer_long,
     current_buffer_short,
-    current_buffer_long
+    current_buffer_long,
+    reset_buffers
 )
 
 # =========================================================
@@ -29,7 +30,7 @@ latest_data_store = {}
 print("🔥 INITIALIZING SYSTEM...")
 
 # =========================================================
-# SUPABASE CONFIGURATION (NEW: From Version 1)
+# SUPABASE CONFIGURATION
 # =========================================================
 SUPABASE_URL = "https://qkniqwgcwvxkgjciccad.supabase.co"
 SUPABASE_KEY = "sb_publishable_pzHW1LlymSCVL876qchBKw_pPY0xN-2"
@@ -72,17 +73,20 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 hotspot_model = joblib.load(os.path.join(BASE_DIR, "ml/hotspot_model.pkl"))
 overload_model = joblib.load(os.path.join(BASE_DIR, "ml/overload_model.pkl"))
 
-FEATURE_COLUMNS = hotspot_model.feature_names_in_.tolist()
+HOTSPOT_FEATURES = hotspot_model.feature_names_in_.tolist()
+OVERLOAD_FEATURES = overload_model.feature_names_in_.tolist()
 
 # =========================================================
-# THRESHOLDS
+# THRESHOLDS (Version 2 thresholds preserved)
 # =========================================================
 WARMUP_SAMPLES = 10
-WARNING_THRESHOLD = 0.70
-CRITICAL_THRESHOLD = 0.85
+WARNING_THRESHOLD = 0.65
+CRITICAL_THRESHOLD = 0.70
+WARNING_OVL = 0.75
+CRITICAL_OVL = 0.90
 
 # =========================================================
-# ALERT TRACKING (Enhanced with Version 1 cooldown)
+# ALERT TRACKING (Enhanced with cooldown)
 # =========================================================
 last_alert_time = {}
 ALERT_COOLDOWN_SECONDS = 300
@@ -96,7 +100,7 @@ def should_send_alert(alert_type):
     return True
 
 # =========================================================
-# SUPABASE FUNCTIONS (NEW: From Version 1)
+# SUPABASE FUNCTIONS
 # =========================================================
 def send_to_supabase(temp, current, state, hot_prob, ovl_prob, composite_risk, action):
     """Send REAL sensor data to Supabase"""
@@ -133,48 +137,6 @@ def send_to_supabase(temp, current, state, hot_prob, ovl_prob, composite_risk, a
         return False
 
 # =========================================================
-# TIME-TO-TRIP CALCULATION (NEW: From Version 1)
-# =========================================================
-def calculate_time_to_trip(temp, current, hot_prob, ovl_prob):
-    """Estimate time until breaker trips based on conditions"""
-    try:
-        # Base estimation logic
-        if hot_prob >= 0.85:
-            # Critical hotspot - very urgent
-            minutes = max(1, int(5 * (1 - (hot_prob - 0.85) / 0.15)))
-            urgency = "CRITICAL - Immediate action required"
-        elif hot_prob >= 0.70:
-            # Warning level
-            minutes = max(5, int(15 * (1 - (hot_prob - 0.70) / 0.15)))
-            urgency = "URGENT - Take action soon"
-        elif ovl_prob >= 0.85:
-            # Critical overload
-            minutes = max(2, int(8 * (1 - (ovl_prob - 0.85) / 0.15)))
-            urgency = "CRITICAL - Reduce load immediately"
-        elif ovl_prob >= 0.70:
-            # Overload warning
-            minutes = max(10, int(20 * (1 - (ovl_prob - 0.70) / 0.15)))
-            urgency = "MODERATE - Plan load reduction"
-        else:
-            return None
-        
-        # Format the time
-        if minutes < 60:
-            time_str = f"{minutes} minute{'s' if minutes != 1 else ''}"
-        else:
-            hours = minutes // 60
-            mins = minutes % 60
-            time_str = f"{hours} hour{'s' if hours != 1 else ''} {mins} minute{'s' if mins != 1 else ''}"
-        
-        return {
-            "minutes": minutes,
-            "formatted": time_str,
-            "urgency": urgency
-        }
-    except:
-        return None
-
-# =========================================================
 # FALLBACK LOGGER
 # =========================================================
 def log_fallback_alert(subject, body):
@@ -189,10 +151,10 @@ def log_fallback_alert(subject, body):
         print("⚠ Fallback logging failed:", e)
 
 # =========================================================
-# ENHANCED EMAIL ALERT SYSTEM (Merged Version 1 + Version 2)
+# ENHANCED EMAIL ALERT SYSTEM (Without time-to-trip)
 # =========================================================
-def send_breaker_alert(reading, risk, alert_type, message_action, time_to_trip=None):
-    """Enhanced email alert with time-to-trip information"""
+def send_breaker_alert(reading, risk, alert_type, message_action):
+    """Enhanced email alert without time-to-trip information"""
     
     if not email_enabled or mail is None:
         print("⚠ Email skipped (disabled)")
@@ -204,12 +166,7 @@ def send_breaker_alert(reading, risk, alert_type, message_action, time_to_trip=N
         'mercymicadespabiladeras@gmail.com'
     ]
 
-    # Add time-to-trip info if available
-    time_to_trip_text = ""
-    if time_to_trip and alert_type in ["Critical", "Warning"]:
-        time_to_trip_text = f"\n\nEstimated Time to Trip: {time_to_trip['formatted']}\nUrgency: {time_to_trip['urgency']}"
-
-    # Version 1 style subject lines
+    # Version 1 style subject lines with Version 2 formatting
     if alert_type == "Critical":
         if risk['hotspot_prob'] >= 0.85:
             subject = "🔥 CRITICAL: Breaker Overheating Alert!"
@@ -223,9 +180,9 @@ Temperature: {reading.temperature_c:.1f}°C
 Current: {reading.current_a:.2f}A
 Hotspot Probability: {risk['hotspot_prob']*100:.1f}%
 Overload Probability: {risk['overload_prob']*100:.1f}%
-{time_to_trip_text}
 
-Action Required: {message_action}
+--- PROACTIVE ACTION RECOMMENDED ---
+{message_action}
 
 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
 
@@ -239,9 +196,9 @@ Temperature: {reading.temperature_c:.1f}°C
 Current: {reading.current_a:.2f}A
 Hotspot Probability: {risk['hotspot_prob']*100:.1f}%
 Overload Probability: {risk['overload_prob']*100:.1f}%
-{time_to_trip_text}
 
-Recommended Action: {message_action}
+--- PROACTIVE ACTION RECOMMENDED ---
+{message_action}
 
 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
     
@@ -258,7 +215,8 @@ Current: {reading.current_a:.2f}A
 Hotspot Risk: {risk['hotspot_prob']*100:.1f}%
 Overload Risk: {risk['overload_prob']*100:.1f}%
 
-Action: {message_action}
+--- PROACTIVE ACTION RECOMMENDED ---
+{message_action}
 """
 
     try:
@@ -278,29 +236,42 @@ Action: {message_action}
         return False, str(e)
 
 # =========================================================
-# STATE LOGIC (PRESERVED from Version 2)
+# FEATURE BUILDER WRAPPER (Version 2)
+# =========================================================
+def build_hotspot_X(temp, current):
+    feat = build_basic_features(temp, current)
+    feat = feat.reindex(columns=HOTSPOT_FEATURES, fill_value=0)
+    return feat
+
+def build_overload_X(temp, current):
+    feat = build_basic_features(temp, current)
+    feat = feat.reindex(columns=OVERLOAD_FEATURES, fill_value=0)
+    return feat
+
+# =========================================================
+# STATE LOGIC (Version 2 preserved)
 # =========================================================
 def determine_state(hot_prob, ovl_prob):
 
-    if len(temp_buffer_short) < 10 or len(temp_buffer_long) < 10:
+    if len(temp_buffer_short) < WARMUP_SAMPLES or len(temp_buffer_long) < WARMUP_SAMPLES:
         return "WarmingUp", "System initializing..."
 
     if hot_prob >= CRITICAL_THRESHOLD:
         return "Critical", "Severe overheating detected"
 
-    if ovl_prob >= CRITICAL_THRESHOLD:
+    if ovl_prob >= CRITICAL_OVL:
         return "Critical", "Severe overload detected"
 
     if hot_prob >= WARNING_THRESHOLD:
         return "Warning", "Elevated temperature detected"
 
-    if ovl_prob >= WARNING_THRESHOLD:
+    if ovl_prob >= WARNING_OVL:
         return "Warning", "High load detected"
 
     return "Normal", "System stable"
 
 # =========================================================
-# ACTION ENGINE (PRESERVED from Version 2)
+# ACTION ENGINE (Version 2 preserved)
 # =========================================================
 def get_action(state, hotspot, overload):
 
@@ -333,7 +304,7 @@ def get_action(state, hotspot, overload):
     return "System normal."
 
 # =========================================================
-# API ENDPOINT (ENHANCED with Supabase + Version 2 features)
+# API ENDPOINT (Without time-to-trip)
 # =========================================================
 @app.route("/api/update", methods=["POST"])
 def update_data():
@@ -342,29 +313,48 @@ def update_data():
     temp = float(data["temperature"])
     current = float(data["current"])
 
-    X = build_basic_features(temp, current)
-    X = X.reindex(columns=FEATURE_COLUMNS, fill_value=0)
+    # =========================
+    # HOTSPOT MODEL INPUT (Version 2)
+    # =========================
+    X_hot = build_hotspot_X(temp, current)
+    hot_prob = float(hotspot_model.predict_proba(X_hot)[0][1])
 
-    hot_prob = float(hotspot_model.predict_proba(X)[0][1])
-    ovl_prob = float(overload_model.predict_proba(X)[0][1])
+    # =========================
+    # OVERLOAD MODEL INPUT (Version 2)
+    # =========================
+    X_ovr = build_overload_X(temp, current)
+    ovl_prob = float(overload_model.predict_proba(X_ovr)[0][1])
+    
+    # Version 2 current adjustment
+    if current < 16:
+        ovl_prob *= 0.5
+    
+    # Composite risk calculation (Version 1)
+    composite_risk = (hot_prob + ovl_prob) / 2
 
-    composite_risk = (hot_prob + ovl_prob) / 2  # NEW: For Supabase
-
-    state, status = determine_state(hot_prob, ovl_prob)
-
-    # =====================================================
-    # FORECAST (PRESERVED from Version 2)
-    # =====================================================
-    feat = X
-
-    future_temp = temp
-    future_current = current
+    # =========================
+    # SAFE FORECAST BLOCK (Version 2)
+    # =========================
+    try:
+        slope1 = (
+            float(X_hot["temp_slope_short"].iloc[0]) * 0.7 +
+            float(X_hot["temp_slope_long"].iloc[0]) * 0.3
+        )
+        future_temp = temp + slope1 * 10
+    except Exception:
+        future_temp = temp
 
     try:
-        future_temp = temp + feat["temp_slope_short"].values[0] * 10
-        future_current = current + feat["current_slope_short"].values[0] * 10
+        slope = float(X_ovr["current_slope_short"].iloc[0])
     except:
-        pass
+        slope = 0.0
+
+    future_current = current + slope * 10
+
+    # =========================
+    # STATE (Version 2)
+    # =========================
+    state, status = determine_state(hot_prob, ovl_prob)
 
     action = get_action(
         state,
@@ -372,16 +362,9 @@ def update_data():
         ovl_prob >= WARNING_THRESHOLD
     )
 
-    # =====================================================
-    # TIME-TO-TRIP CALCULATION (NEW: From Version 1)
-    # =====================================================
-    time_to_trip = None
-    if state in ["Warning", "Critical"]:
-        time_to_trip = calculate_time_to_trip(temp, current, hot_prob, ovl_prob)
-
-    # =====================================================
-    # ALERTS (ENHANCED with time-to-trip from Version 1)
-    # =====================================================
+    # =========================
+    # ALERTS (Without time-to-trip)
+    # =========================
     if state in ["Warning", "Critical"]:
         if should_send_alert(state):
             send_breaker_alert(
@@ -394,39 +377,37 @@ def update_data():
                     "overload_prob": ovl_prob
                 },
                 alert_type=state,
-                message_action=action,
-                time_to_trip=time_to_trip  # NEW: Pass time-to-trip info
+                message_action=action
             )
 
-    # =====================================================
-    # SEND TO SUPABASE (NEW: From Version 1)
-    # =====================================================
+    # =========================
+    # SEND TO SUPABASE (Version 1)
+    # =========================
     supabase_success = send_to_supabase(
         temp, current, state, 
         hot_prob, ovl_prob, 
         composite_risk, action
     )
 
-    # =====================================================
-    # UPDATE LOCAL STORAGE (PRESERVED from Version 2 + Supabase status)
-    # =====================================================
+    # =========================
+    # STORE RESPONSE (Version 2 + Supabase status)
+    # =========================
     latest_data_store.update({
         "temperature": float(temp),
         "current": float(current),
         "state": state,
         "status": status,
         "action": action,
-        "supabase_sync": supabase_success,  # NEW: From Version 1
+        "supabase_sync": supabase_success,
         "ml": {
             "hotspot_prob": float(hot_prob),
             "overload_prob": float(ovl_prob),
-            "composite_risk": float(composite_risk)  # NEW: From Version 1
+            "composite_risk": float(composite_risk)
         },
         "forecast": {
             "future_temp": float(round(future_temp, 2)),
             "future_current": float(round(future_current, 2))
         },
-        "time_to_trip": time_to_trip,  # NEW: From Version 1
         "buffer_size": int(len(temp_buffer_short)),
         "time": datetime.now().strftime("%H:%M:%S")
     })
@@ -436,11 +417,30 @@ def update_data():
     return jsonify(latest_data_store)
 
 # =========================================================
-# ROUTES (PRESERVED from Version 2 + New Supabase routes)
+# ROUTES (Version 2 + New Supabase routes)
 # =========================================================
 @app.route("/")
 def index():
     return render_template("index.html")
+
+# =========================================================
+# FULL HISTORY PAGE ROUTE (ADD THIS)
+# =========================================================
+@app.route("/full_history.html")
+def full_history_page():
+    """Render the full history page"""
+    return render_template("full_history.html")
+
+# Alternative history routes (optional but helpful)
+@app.route("/history")
+def history_page():
+    """Redirect or render history page"""
+    return render_template("full_history.html")
+
+@app.route("/logs")
+def logs_page():
+    """Redirect or render history page"""
+    return render_template("full_history.html")
 
 @app.route("/api/latest-data")
 def latest():
@@ -457,7 +457,7 @@ def health():
     })
 
 # =========================================================
-# NEW: SUPABASE TEST ENDPOINT (From Version 1)
+# SUPABASE TEST ENDPOINT (Version 1)
 # =========================================================
 @app.route("/api/test-supabase")
 def test_supabase():
@@ -477,6 +477,34 @@ def test_supabase():
         return jsonify({"success": False, "error": str(e)})
 
 # =========================================================
+# HISTORY API ENDPOINTS (Full History Feature)
+# =========================================================
+
+@app.route("/api/history")
+def get_full_history():
+    """Get all historical readings from Supabase"""
+    if supabase is None:
+        return jsonify({"success": False, "error": "Supabase not connected", "data": []}), 500
+    
+    try:
+        # Get all readings, most recent first
+        response = supabase.table("breaker_readings")\
+            .select("*")\
+            .order("created_at", desc=True)\
+            .execute()
+        
+        if response and hasattr(response, 'data'):
+            return jsonify({
+                "success": True,
+                "data": response.data,
+                "count": len(response.data)
+            })
+        return jsonify({"success": True, "data": [], "count": 0})
+    except Exception as e:
+        print(f"History error: {e}")
+        return jsonify({"success": False, "error": str(e), "data": []}), 500
+
+# =========================================================
 # RUN SERVER
 # =========================================================
 if __name__ == "__main__":
@@ -484,6 +512,8 @@ if __name__ == "__main__":
     print(f"📡 Supabase: {'Connected' if supabase else 'Failed'}")
     print(f"📧 Email: {'Enabled' if email_enabled else 'Disabled'}")
     print(f"🔮 Forecast: Enabled (Version 2 feature)")
-    print(f"⏱️  Time-to-Trip: Enabled (Version 1 feature)")
+    print(f"📊 History API: Enabled at /api/history")
+    print(f"📄 History Page: Enabled at /full_history.html")
+    print(f"⚡ Thresholds: Warning={WARNING_THRESHOLD}, Critical={CRITICAL_THRESHOLD}")
     print("===================================")
     app.run(host="0.0.0.0", port=5000, debug=False)

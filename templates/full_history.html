@@ -89,7 +89,7 @@ body {
 .btn-secondary:hover { background: #475569; }
 .btn-download { background: #22c55e; color: white; }
 .btn-download:hover { background: #16a34a; }
-.btn-small { padding: 4px 12px; font-size: 11px; }
+.btn-small { padding: 4px 12px; font-size: 11px; background: #0ea5e9; color: white; border: none; border-radius: 20px; cursor: pointer; }
 .quick-filters {
   display: flex;
   gap: 10px;
@@ -150,6 +150,11 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
   from { transform: translateX(100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
+.loading-spinner {
+  text-align: center;
+  padding: 48px;
+  color: #94a3b8;
+}
 @media (max-width: 768px) {
   .dashboard { padding: 16px; }
   .history-header { flex-direction: column; text-align: center; }
@@ -164,30 +169,99 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
   <div class="history-header">
     <div>
       <h1>⚡ Breaker Monitoring Logs</h1>
-      <p class="subtext">Full historical data with advanced filtering</p>
+      <p class="subtext">Full historical data from Supabase database</p>
     </div>
     <a href="/" class="btn-back">← Back to Dashboard</a>
   </div>
+  
   <div class="filter-section">
     <div class="filter-row">
-      <div class="filter-group"><label>📅 Preset</label><select id="dateRangePreset"><option value="custom">Custom Range</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="week">Last 7 Days</option><option value="month">Last 30 Days</option></select></div>
-      <div class="filter-group"><label>Start Date</label><input type="date" id="startDate"></div>
-      <div class="filter-group"><label>Start Time</label><input type="time" id="startTime"></div>
-      <div class="filter-group"><label>End Date</label><input type="date" id="endDate"></div>
-      <div class="filter-group"><label>End Time</label><input type="time" id="endTime"></div>
+      <div class="filter-group">
+        <label>📅 Preset</label>
+        <select id="dateRangePreset">
+          <option value="custom">Custom Range</option>
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="week">Last 7 Days</option>
+          <option value="month">Last 30 Days</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Start Date</label>
+        <input type="date" id="startDate">
+      </div>
+      <div class="filter-group">
+        <label>Start Time</label>
+        <input type="time" id="startTime">
+      </div>
+      <div class="filter-group">
+        <label>End Date</label>
+        <input type="date" id="endDate">
+      </div>
+      <div class="filter-group">
+        <label>End Time</label>
+        <input type="time" id="endTime">
+      </div>
     </div>
+    
     <div class="filter-row">
-      <div class="filter-group"><label>Status</label><select id="statusFilter"><option value="all">All Statuses</option><option value="normal">✅ Normal</option><option value="warning">⚠️ Potential Overload</option><option value="overload">🔴 Overload</option><option value="danger">🔥 Overheating</option></select></div>
-      <div class="filter-group"><label>Search</label><input type="text" id="searchInput" placeholder="Search..."></div>
-      <div class="filter-actions"><button id="applyFiltersBtn" class="btn">🔍 Apply Filters</button><button id="clearFiltersBtn" class="btn-secondary">🗑️ Clear All</button><button id="downloadCsvBtn" class="btn-download">📥 Download CSV</button></div>
+      <div class="filter-group">
+        <label>Status</label>
+        <select id="statusFilter">
+          <option value="all">All Statuses</option>
+          <option value="normal">✅ Normal</option>
+          <option value="warning">⚠️ Potential Overload</option>
+          <option value="overload">🔴 Overload</option>
+          <option value="danger">🔥 Overheating</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Search</label>
+        <input type="text" id="searchInput" placeholder="Search...">
+      </div>
+      <div class="filter-actions">
+        <button id="applyFiltersBtn" class="btn">🔍 Apply Filters</button>
+        <button id="clearFiltersBtn" class="btn-secondary">🗑️ Clear All</button>
+        <button id="downloadCsvBtn" class="btn-download">📥 Download CSV</button>
+      </div>
     </div>
-    <div class="quick-filters"><span class="badge">⚡ Quick Filters:</span><button id="quick1h" class="btn-small">Last Hour</button><button id="quick24h" class="btn-small">Last 24 Hours</button><button id="quick7d" class="btn-small">Last 7 Days</button></div>
-    <div class="stats-bar"><span>📋 Total Logs: <strong id="total-count">0</strong></span><span>🎯 Filtered: <strong id="filtered-count">0</strong></span></div>
+    
+    <div class="quick-filters">
+      <span class="badge">⚡ Quick Filters:</span>
+      <button id="quick1h" class="btn-small">Last Hour</button>
+      <button id="quick24h" class="btn-small">Last 24 Hours</button>
+      <button id="quick7d" class="btn-small">Last 7 Days</button>
+    </div>
+    
+    <div class="stats-bar">
+      <span>📋 Total Logs: <strong id="total-count">0</strong></span>
+      <span>🎯 Filtered: <strong id="filtered-count">0</strong></span>
+      <span>📡 Data Source: <strong style="color:#22c55e;">Supabase Cloud</strong></span>
+    </div>
   </div>
+  
   <div class="table-wrap">
-    <table><thead><tr><th>Date & Time</th><th>Temperature (°C)</th><th>Current (A)</th><th>Breaker State</th><th>Status</th></tr></thead><tbody id="full-log-body"></tbody></table>
+    <table>
+      <thead>
+        <tr>
+          <th>Date & Time</th>
+          <th>Temperature (°C)</th>
+          <th>Current (A)</th>
+          <th>Hotspot Prob</th>
+          <th>Overload Prob</th>
+          <th>Breaker State</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="full-log-body">
+        <tr>
+          <td colspan="7" class="loading-spinner">⏳ Loading data from Supabase...</td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 </main>
+
 <script>
 (function() {
   const fullLogBody = document.getElementById("full-log-body");
@@ -206,51 +280,326 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
   const quick1h = document.getElementById("quick1h");
   const quick24h = document.getElementById("quick24h");
   const quick7d = document.getElementById("quick7d");
-  let allLogs = [], currentFilteredLogs = [];
+  
+  let allLogs = [];
+  let currentFilteredLogs = [];
 
-  function parseTimestamp(timestamp) { if (!timestamp) return new Date(); const date = new Date(timestamp); return isNaN(date.getTime()) ? new Date() : date; }
-  function formatDisplayDate(dateObj) { if (!dateObj || isNaN(dateObj.getTime())) return "Invalid Date"; return dateObj.toLocaleString(); }
-  function createDateFromInputs(dateValue, timeValue) { if (!dateValue) return null; const timeStr = timeValue || "00:00"; return new Date(`${dateValue}T${timeStr}:00`); }
+  // Helper functions
+  function parseTimestamp(timestamp) { 
+    if (!timestamp) return new Date(); 
+    const date = new Date(timestamp); 
+    return isNaN(date.getTime()) ? new Date() : date; 
+  }
+  
+  function formatDisplayDate(dateObj) { 
+    if (!dateObj || isNaN(dateObj.getTime())) return "Invalid Date"; 
+    return dateObj.toLocaleString(); 
+  }
+  
+  function createDateFromInputs(dateValue, timeValue) { 
+    if (!dateValue) return null; 
+    const timeStr = timeValue || "00:00"; 
+    return new Date(`${dateValue}T${timeStr}:00`); 
+  }
+
+  // Convert API data to the format expected by the table
+  function convertApiData(apiData) {
+    if (!apiData || !Array.isArray(apiData)) return [];
+    
+    return apiData.map(item => {
+      // Map breaker_state to the display format
+      let breakerState = item.breaker_state || "Normal";
+      let displayState = breakerState;
+      let systemStatus = "";
+      let stateClass = "state-normal";
+      let stateIcon = "✅ ";
+      
+      if (breakerState === "Critical") {
+        // Determine if it's overheating or overload based on probabilities
+        if (item.hotspot_probability > 0.7) {
+          displayState = "Overheating";
+          systemStatus = `Critical: ${(item.hotspot_probability * 100).toFixed(1)}% hotspot probability`;
+          stateClass = "state-danger";
+          stateIcon = "🔥 ";
+        } else {
+          displayState = "Overload";
+          systemStatus = `Critical: ${(item.overload_probability * 100).toFixed(1)}% overload probability`;
+          stateClass = "state-overload";
+          stateIcon = "⚠️ ";
+        }
+      } else if (breakerState === "Warning") {
+        displayState = "Potential Overload";
+        systemStatus = `Warning: ${(item.overload_probability * 100).toFixed(1)}% load approaching threshold`;
+        stateClass = "state-warning";
+        stateIcon = "⚡ ";
+      } else {
+        systemStatus = "System operating normally";
+        stateClass = "state-normal";
+        stateIcon = "✅ ";
+      }
+      
+      return {
+        timestamp: item.created_at,
+        temperature: item.temperature_c,
+        current: item.current_a,
+        hotspot_prob: item.hotspot_probability,
+        overload_prob: item.overload_probability,
+        breakerState: breakerState,
+        displayState: displayState,
+        systemStatus: systemStatus,
+        stateClass: stateClass,
+        stateIcon: stateIcon,
+        action: item.recommended_action
+      };
+    });
+  }
+
+  // Fetch data from your backend API
+  async function loadData() {
+    try {
+      fullLogBody.innerHTML = '<tr><td colspan="7" class="loading-spinner">⏳ Loading data from Supabase...</td></tr>';
+      
+      const response = await fetch('/api/history');
+      const result = await response.json();
+      
+      // Handle both response formats
+      let apiData = result.success ? result.data : (Array.isArray(result) ? result : []);
+      
+      console.log(`✅ Fetched ${apiData.length} records from Supabase API`);
+      
+      // Convert API data to the format expected by the table
+      allLogs = convertApiData(apiData);
+      
+      // Sort by timestamp (newest first)
+      allLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      
+      currentFilteredLogs = [...allLogs];
+      renderTable();
+      updateStats();
+      
+      if (allLogs.length === 0) {
+        fullLogBody.innerHTML = '<tr><td colspan="7" class="loading-spinner">📭 No data found in database. Send some sensor data first.</td></tr>';
+      }
+    } catch (error) {
+      console.error("❌ Error loading data from API:", error);
+      fullLogBody.innerHTML = '<tr><td colspan="7" class="loading-spinner" style="color:#ef4444;">❌ Error connecting to server. Make sure the Flask backend is running.</td></tr>';
+      allLogs = [];
+      currentFilteredLogs = [];
+    }
+  }
 
   function applyAllFilters() {
     let filtered = [...allLogs];
-    const startDate = startDateInput?.value, endDate = endDateInput?.value, startTime = startTimeInput?.value, endTime = endTimeInput?.value;
-    if (startDate) { const startDateTime = createDateFromInputs(startDate, startTime); if (startDateTime) filtered = filtered.filter(log => parseTimestamp(log.timestamp) >= startDateTime); }
-    if (endDate) { const endDateTime = createDateFromInputs(endDate, endTime); if (endDateTime) filtered = filtered.filter(log => parseTimestamp(log.timestamp) <= endDateTime); }
+    
+    // Date range filter
+    const startDate = startDateInput?.value;
+    const endDate = endDateInput?.value;
+    const startTime = startTimeInput?.value;
+    const endTime = endTimeInput?.value;
+    
+    if (startDate) { 
+      const startDateTime = createDateFromInputs(startDate, startTime); 
+      if (startDateTime) {
+        filtered = filtered.filter(log => parseTimestamp(log.timestamp) >= startDateTime);
+      }
+    }
+    
+    if (endDate) { 
+      const endDateTime = createDateFromInputs(endDate, endTime); 
+      if (endDateTime) {
+        filtered = filtered.filter(log => parseTimestamp(log.timestamp) <= endDateTime);
+      }
+    }
+    
+    // Status filter
     const status = statusFilter?.value || "all";
-    if (status !== "all") filtered = filtered.filter(log => { if (status === "normal") return log.breakerState === "Normal"; if (status === "warning") return log.breakerState === "Potential Overload"; if (status === "overload") return log.breakerState === "Overload"; if (status === "danger") return log.breakerState === "Overheating"; return true; });
+    if (status !== "all") {
+      filtered = filtered.filter(log => {
+        if (status === "normal") return log.breakerState === "Normal";
+        if (status === "warning") return log.displayState === "Potential Overload";
+        if (status === "overload") return log.displayState === "Overload";
+        if (status === "danger") return log.displayState === "Overheating";
+        return true;
+      });
+    }
+    
+    // Search filter
     const searchTerm = searchInput?.value.toLowerCase().trim() || "";
-    if (searchTerm) filtered = filtered.filter(log => (log.breakerState || "").toLowerCase().includes(searchTerm) || (log.systemStatus || "").toLowerCase().includes(searchTerm) || (log.temperature || 0).toString().includes(searchTerm) || (log.current || 0).toString().includes(searchTerm));
-    currentFilteredLogs = filtered; renderTable(); updateStats();
+    if (searchTerm) {
+      filtered = filtered.filter(log => 
+        (log.displayState || "").toLowerCase().includes(searchTerm) ||
+        (log.systemStatus || "").toLowerCase().includes(searchTerm) ||
+        (log.temperature || 0).toString().includes(searchTerm) ||
+        (log.current || 0).toString().includes(searchTerm)
+      );
+    }
+    
+    currentFilteredLogs = filtered;
+    renderTable();
+    updateStats();
   }
-  function updateStats() { if (totalCountSpan) totalCountSpan.textContent = allLogs.length; if (filteredCountSpan) filteredCountSpan.textContent = currentFilteredLogs.length; }
-  function loadData() {
-    try { const stored = localStorage.getItem("breakerFullHistory"); allLogs = stored ? JSON.parse(stored) : []; allLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)); currentFilteredLogs = [...allLogs]; renderTable(); updateStats(); console.log(`Loaded ${allLogs.length} logs`); }
-    catch (error) { console.error("Error loading data:", error); allLogs = []; currentFilteredLogs = []; renderTable(); }
+  
+  function updateStats() { 
+    if (totalCountSpan) totalCountSpan.textContent = allLogs.length; 
+    if (filteredCountSpan) filteredCountSpan.textContent = currentFilteredLogs.length; 
   }
+  
   function renderTable() {
-    if (!fullLogBody) return; fullLogBody.innerHTML = "";
-    if (currentFilteredLogs.length === 0) { const emptyRow = document.createElement("tr"); emptyRow.innerHTML = '<td colspan="5" style="text-align:center; padding:48px;">📭 No logs found. Data will appear as the dashboard runs.</td>'; fullLogBody.appendChild(emptyRow); return; }
+    if (!fullLogBody) return;
+    fullLogBody.innerHTML = "";
+    
+    if (currentFilteredLogs.length === 0) {
+      const emptyRow = document.createElement("tr");
+      emptyRow.innerHTML = '<td colspan="7" style="text-align:center; padding:48px;">📭 No logs found matching your filters.</td>';
+      fullLogBody.appendChild(emptyRow);
+      return;
+    }
+    
     currentFilteredLogs.forEach(log => {
-      let stateClass = "state-normal", stateIcon = "";
-      if (log.breakerState === "Overheating") { stateClass = "state-danger"; stateIcon = "🔥 "; }
-      else if (log.breakerState === "Overload") { stateClass = "state-overload"; stateIcon = "⚠️ "; }
-      else if (log.breakerState === "Potential Overload") { stateClass = "state-warning"; stateIcon = "⚡ "; }
-      else { stateClass = "state-normal"; stateIcon = "✅ "; }
-      const row = document.createElement("tr"); row.innerHTML = `<td>${formatDisplayDate(parseTimestamp(log.timestamp))}</td><td><strong>${log.temperature.toFixed(1)}°C</strong></td><td><strong>${log.current.toFixed(1)}A</strong></td><td class="${stateClass}">${stateIcon}${log.breakerState}</td><td>${log.systemStatus || '—'}</td>`; fullLogBody.appendChild(row);
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${formatDisplayDate(parseTimestamp(log.timestamp))}</td>
+        <td><strong>${log.temperature.toFixed(1)}°C</strong></td>
+        <td><strong>${log.current.toFixed(1)}A</strong></td>
+        <td>${(log.hotspot_prob * 100).toFixed(1)}%</td>
+        <td>${(log.overload_prob * 100).toFixed(1)}%</td>
+        <td class="${log.stateClass}">${log.stateIcon}${log.displayState}</td>
+        <td style="max-width: 200px;">${log.systemStatus || '—'}</td>
+      `;
+      fullLogBody.appendChild(row);
     });
   }
-  function clearAllFilters() { if (startDateInput) startDateInput.value = ""; if (endDateInput) endDateInput.value = ""; if (startTimeInput) startTimeInput.value = ""; if (endTimeInput) endTimeInput.value = ""; if (statusFilter) statusFilter.value = "all"; if (searchInput) searchInput.value = ""; if (dateRangePreset) dateRangePreset.value = "custom"; currentFilteredLogs = [...allLogs]; renderTable(); updateStats(); showToast("✅ All filters cleared"); }
-  function showToast(message, isError = false) { const toast = document.createElement('div'); toast.className = 'toast'; toast.style.backgroundColor = isError ? '#ef4444' : '#22c55e'; toast.textContent = message; document.body.appendChild(toast); setTimeout(() => { if (toast.parentNode) toast.remove(); }, 3000); }
-  function downloadCSV() {
-    if (currentFilteredLogs.length === 0) { showToast("⚠️ No logs available to download", true); return; }
-    try { const headers = ["Date Time", "Temperature (°C)", "Current (A)", "Breaker State", "Status"]; const csvRows = [headers]; currentFilteredLogs.forEach(log => { csvRows.push([formatDisplayDate(parseTimestamp(log.timestamp)), log.temperature.toFixed(1), log.current.toFixed(1), log.breakerState, log.systemStatus || "N/A"]); }); const csvContent = csvRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n"); const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" }); const link = document.createElement("a"); const url = URL.createObjectURL(blob); const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-'); link.href = url; link.download = `breaker_logs_${timestamp}.csv`; document.body.appendChild(link); link.click(); document.body.removeChild(link); URL.revokeObjectURL(url); showToast(`✅ Downloaded ${currentFilteredLogs.length} logs successfully!`); }
-    catch (error) { console.error("CSV Download error:", error); showToast("❌ Error downloading CSV", true); }
+  
+  function clearAllFilters() { 
+    if (startDateInput) startDateInput.value = ""; 
+    if (endDateInput) endDateInput.value = ""; 
+    if (startTimeInput) startTimeInput.value = ""; 
+    if (endTimeInput) endTimeInput.value = ""; 
+    if (statusFilter) statusFilter.value = "all"; 
+    if (searchInput) searchInput.value = ""; 
+    if (dateRangePreset) dateRangePreset.value = "custom"; 
+    currentFilteredLogs = [...allLogs]; 
+    renderTable(); 
+    updateStats(); 
+    showToast("✅ All filters cleared"); 
   }
-  function filterByHours(hours) { const cutoff = new Date(Date.now() - hours * 3600000); if (startDateInput) { startDateInput.value = cutoff.toISOString().split('T')[0]; if (startTimeInput) startTimeInput.value = cutoff.toTimeString().slice(0,5); } if (endDateInput) endDateInput.value = ""; if (endTimeInput) endTimeInput.value = ""; if (statusFilter) statusFilter.value = "all"; if (searchInput) searchInput.value = ""; if (dateRangePreset) dateRangePreset.value = "custom"; applyAllFilters(); showToast(`📊 Showing logs from last ${hours} hour${hours > 1 ? 's' : ''}`); }
-  function setDateRangePreset(preset) { const now = new Date(); let start = null, end = null; switch(preset) { case "today": start = new Date(now); start.setHours(0,0,0,0); end = new Date(now); end.setHours(23,59,59,999); break; case "yesterday": start = new Date(now); start.setDate(start.getDate()-1); start.setHours(0,0,0,0); end = new Date(start); end.setHours(23,59,59,999); break; case "week": start = new Date(now); start.setDate(start.getDate()-7); start.setHours(0,0,0,0); end = null; break; case "month": start = new Date(now); start.setMonth(start.getMonth()-1); start.setHours(0,0,0,0); end = null; break; default: return; }
-    if (start && startDateInput) { startDateInput.value = start.toISOString().split('T')[0]; if (startTimeInput) startTimeInput.value = "00:00"; } if (end && endDateInput) { endDateInput.value = end.toISOString().split('T')[0]; if (endTimeInput) endTimeInput.value = "23:59"; } applyAllFilters(); }
-  function startAutoRefresh() { setInterval(() => { try { const stored = localStorage.getItem("breakerFullHistory"); if (stored) { const newData = JSON.parse(stored); if (newData.length !== allLogs.length) loadData(); } } catch (e) { console.error("Auto-refresh error:", e); } }, 5000); }
+  
+  function showToast(message, isError = false) { 
+    const toast = document.createElement('div'); 
+    toast.className = 'toast'; 
+    toast.style.backgroundColor = isError ? '#ef4444' : '#22c55e'; 
+    toast.textContent = message; 
+    document.body.appendChild(toast); 
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 3000); 
+  }
+  
+  function downloadCSV() {
+    if (currentFilteredLogs.length === 0) { 
+      showToast("⚠️ No logs available to download", true); 
+      return; 
+    }
+    
+    try {
+      const headers = ["Date Time", "Temperature (°C)", "Current (A)", "Hotspot Prob (%)", "Overload Prob (%)", "Breaker State", "Status"];
+      const csvRows = [headers];
+      
+      currentFilteredLogs.forEach(log => {
+        csvRows.push([
+          formatDisplayDate(parseTimestamp(log.timestamp)),
+          log.temperature.toFixed(1),
+          log.current.toFixed(1),
+          (log.hotspot_prob * 100).toFixed(1),
+          (log.overload_prob * 100).toFixed(1),
+          log.displayState,
+          log.systemStatus || "N/A"
+        ]);
+      });
+      
+      const csvContent = csvRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+      link.href = url;
+      link.download = `breaker_logs_${timestamp}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showToast(`✅ Downloaded ${currentFilteredLogs.length} logs successfully!`);
+    } catch (error) {
+      console.error("CSV Download error:", error);
+      showToast("❌ Error downloading CSV", true);
+    }
+  }
+  
+  function filterByHours(hours) { 
+    const cutoff = new Date(Date.now() - hours * 3600000); 
+    if (startDateInput) { 
+      startDateInput.value = cutoff.toISOString().split('T')[0]; 
+      if (startTimeInput) startTimeInput.value = cutoff.toTimeString().slice(0,5); 
+    } 
+    if (endDateInput) endDateInput.value = ""; 
+    if (endTimeInput) endTimeInput.value = ""; 
+    if (statusFilter) statusFilter.value = "all"; 
+    if (searchInput) searchInput.value = ""; 
+    if (dateRangePreset) dateRangePreset.value = "custom"; 
+    applyAllFilters(); 
+    showToast(`📊 Showing logs from last ${hours} hour${hours > 1 ? 's' : ''}`); 
+  }
+  
+  function setDateRangePreset(preset) { 
+    const now = new Date(); 
+    let start = null, end = null; 
+    
+    switch(preset) { 
+      case "today": 
+        start = new Date(now); 
+        start.setHours(0,0,0,0); 
+        end = new Date(now); 
+        end.setHours(23,59,59,999); 
+        break; 
+      case "yesterday": 
+        start = new Date(now); 
+        start.setDate(start.getDate()-1); 
+        start.setHours(0,0,0,0); 
+        end = new Date(start); 
+        end.setHours(23,59,59,999); 
+        break; 
+      case "week": 
+        start = new Date(now); 
+        start.setDate(start.getDate()-7); 
+        start.setHours(0,0,0,0); 
+        end = null; 
+        break; 
+      case "month": 
+        start = new Date(now); 
+        start.setMonth(start.getMonth()-1); 
+        start.setHours(0,0,0,0); 
+        end = null; 
+        break; 
+      default: return; 
+    }
+    
+    if (start && startDateInput) { 
+      startDateInput.value = start.toISOString().split('T')[0]; 
+      if (startTimeInput) startTimeInput.value = "00:00"; 
+    } 
+    if (end && endDateInput) { 
+      endDateInput.value = end.toISOString().split('T')[0]; 
+      if (endTimeInput) endTimeInput.value = "23:59"; 
+    } 
+    applyAllFilters(); 
+  }
+  
+  // Auto-refresh every 10 seconds to get new data
+  function startAutoRefresh() { 
+    setInterval(() => { 
+      loadData(); 
+    }, 10000); 
+  }
+  
+  // Event listeners
   if (applyFiltersBtn) applyFiltersBtn.addEventListener("click", applyAllFilters);
   if (clearFiltersBtn) clearFiltersBtn.addEventListener("click", clearAllFilters);
   if (downloadCsvBtn) downloadCsvBtn.addEventListener("click", downloadCSV);
@@ -258,14 +607,27 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
   if (quick24h) quick24h.addEventListener("click", () => filterByHours(24));
   if (quick7d) quick7d.addEventListener("click", () => filterByHours(168));
   if (statusFilter) statusFilter.addEventListener("change", applyAllFilters);
-  if (searchInput) { let searchTimeout; searchInput.addEventListener("input", () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(applyAllFilters, 300); }); }
-  if (dateRangePreset) dateRangePreset.addEventListener("change", (e) => { if (e.target.value !== "custom") setDateRangePreset(e.target.value); });
+  
+  if (searchInput) { 
+    let searchTimeout; 
+    searchInput.addEventListener("input", () => { 
+      clearTimeout(searchTimeout); 
+      searchTimeout = setTimeout(applyAllFilters, 300); 
+    }); 
+  }
+  
+  if (dateRangePreset) dateRangePreset.addEventListener("change", (e) => { 
+    if (e.target.value !== "custom") setDateRangePreset(e.target.value); 
+  });
+  
   if (startDateInput) startDateInput.addEventListener("change", applyAllFilters);
   if (endDateInput) endDateInput.addEventListener("change", applyAllFilters);
   if (startTimeInput) startTimeInput.addEventListener("change", applyAllFilters);
   if (endTimeInput) endTimeInput.addEventListener("change", applyAllFilters);
-  window.addEventListener("storage", (event) => { if (event.key === "breakerFullHistory") loadData(); });
-  loadData(); startAutoRefresh();
+  
+  // Initialize
+  loadData();
+  startAutoRefresh();
 })();
 </script>
 </body>
