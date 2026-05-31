@@ -314,8 +314,13 @@ def update_data():
     temp = float(data["temperature"])
     current = float(data["current"])
     
-    # DEBUG: Print what RPi is sending
-    print(f"\n📡 RPi SENSOR DATA - Temp: {temp}°C, Current: {current}A")
+    # ===== ENHANCED DEBUG: SHOW EXACT RPI DATA =====
+    print(f"\n{'='*60}")
+    print(f"📡 RPi RAW DATA RECEIVED:")
+    print(f"   Temperature: {temp}°C")
+    print(f"   Current: {current}A")
+    print(f"{'='*60}")
+    # ==============================================
 
     # CRITICAL FIX: Manually update buffers before feature extraction
     # This ensures historical data is available for slope calculations
@@ -337,7 +342,7 @@ def update_data():
     
     # DEBUG: Show model prediction
     hot_prob_raw = float(hotspot_model.predict_proba(X_hot)[0][1])
-    print(f"🔥 Hotspot RAW model output: {hot_prob_raw:.4f}")
+    print(f"🔥 Hotspot RAW model output: {hot_prob_raw:.4f} ({hot_prob_raw*100:.1f}%)")
     
     hot_prob = hot_prob_raw
 
@@ -348,14 +353,14 @@ def update_data():
     ovl_prob_raw = float(overload_model.predict_proba(X_ovr)[0][1])
     
     # DEBUG: Show model prediction
-    print(f"⚡ Overload RAW model output: {ovl_prob_raw:.4f}")
+    print(f"⚡ Overload RAW model output: {ovl_prob_raw:.4f} ({ovl_prob_raw*100:.1f}%)")
     
     ovl_prob = ovl_prob_raw
     
     # Version 2 current adjustment
     if current < 16:
         ovl_prob = ovl_prob_raw * 0.5
-        print(f"⚡ Overload probability (adjusted for low current): {ovl_prob:.4f}")
+        print(f"⚡ Overload probability (adjusted for low current): {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
     
     # Composite risk calculation (Version 1)
     composite_risk = (hot_prob + ovl_prob) / 2
@@ -452,6 +457,7 @@ def update_data():
         "time": datetime.now().strftime("%H:%M:%S")
     })
 
+    print(f"✅ FINAL DISPLAY VALUES: Hotspot={hot_prob*100:.1f}% | Overload={ovl_prob*100:.1f}%")
     print(f"✅ FINAL: [{state}] T={temp:.2f}°C I={current:.2f}A HP={hot_prob:.3f} OP={ovl_prob:.3f} Supabase={'✓' if supabase_success else '✗'}")
     print("="*70)
 
@@ -490,7 +496,9 @@ def test_model():
             "temperature": test["temp"],
             "current": test["current"],
             "hotspot_probability": round(hot_prob, 4),
-            "overload_probability": round(ovl_prob, 4)
+            "hotspot_percent": round(hot_prob * 100, 1),
+            "overload_probability": round(ovl_prob, 4),
+            "overload_percent": round(ovl_prob * 100, 1)
         })
     
     return jsonify({

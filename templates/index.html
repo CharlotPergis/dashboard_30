@@ -87,7 +87,7 @@ body {
   background: #0f172a;
   padding: 4px 10px;
   border-radius: 30px;
-  border-left: 2px solid #fbbf24;
+  border-left: 2px solid #22c55e;
 }
 .status-label {
   font-size: 10px;
@@ -96,16 +96,7 @@ body {
 .status-value-header {
   font-size: 11px;
   font-weight: 600;
-  color: #fbbf24;
-}
-.waiting-chip {
-  font-size: 9px;
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.15);
-  padding: 3px 10px;
-  border-radius: 30px;
-  font-weight: 600;
-  animation: pulse 2s infinite;
+  color: #22c55e;
 }
 .live-chip {
   font-size: 9px;
@@ -114,10 +105,6 @@ body {
   padding: 3px 10px;
   border-radius: 30px;
   font-weight: 600;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
 }
 .btn {
   background: #0ea5e9;
@@ -244,16 +231,16 @@ body {
 }
 .progress-bar-container {
   width: 100%;
-  height: 3px;
+  height: 4px;
   background: #334155;
-  border-radius: 3px;
-  margin: 5px 0 2px;
+  border-radius: 4px;
+  margin: 8px 0 2px;
   overflow: hidden;
 }
 .progress-bar {
   height: 100%;
-  border-radius: 3px;
-  transition: width 0.5s ease;
+  border-radius: 4px;
+  transition: width 0.3s ease;
 }
 .probability-value {
   font-size: 18px;
@@ -261,14 +248,13 @@ body {
   margin-bottom: 3px;
 }
 .breaker-state-text {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 22px;
+  font-weight: 800;
 }
 .breaker-state-text.Normal { color: #22c55e; }
 .breaker-state-text.Warning { color: #fbbf24; }
 .breaker-state-text.Critical { color: #f43f5e; }
 .breaker-state-text.WarmingUp { color: #0ea5e9; }
-.breaker-state-text.Waiting { color: #94a3b8; }
 
 /* Two Column Layout */
 .two-column-row {
@@ -455,9 +441,9 @@ body {
     <div class="header-actions">
       <div class="system-status-header">
         <span class="status-label">🖥️ Data Source:</span>
-        <span id="system-status-header" class="status-value-header">WAITING</span>
+        <span id="system-status-header" class="status-value-header">LIVE RPi</span>
       </div>
-      <div id="status-chip" class="waiting-chip">● WAITING FOR RPi</div>
+      <div class="live-chip">● LIVE RPi DATA</div>
       <button id="refresh-btn" class="btn" onclick="location.reload()">⟳ Refresh</button>
     </div>
   </header>
@@ -520,7 +506,7 @@ body {
         <div class="kpi-icon">🔌</div>
         <div class="kpi-content">
           <span class="kpi-label">Breaker State (ML Analysis)</span>
-          <div class="kpi-value"><span id="breaker-state" class="breaker-state-text Waiting">--</span></div>
+          <div class="kpi-value"><span id="breaker-state" class="breaker-state-text Normal">--</span></div>
           <span id="state-note" class="kpi-note">Based on real RPi sensor data</span>
         </div>
       </div>
@@ -544,9 +530,9 @@ body {
               <tr><th>Time</th><th>Temp</th><th>Current</th><th>Hotspot</th><th>Overload</th><th>State</th><th>Action</th></tr>
             </thead>
             <tbody id="log-body">
-              <tr><td colspan="7" class="empty-state">⏳ Waiting for Raspberry Pi to connect...<br><span style="font-size: 10px;">Start the RPi sensor script to begin monitoring</span></td></tr>
+              <tr><td colspan="7" class="empty-state">Waiting for RPi sensor data...</td></tr>
             </tbody>
-          </table>
+           </>
         </div>
       </div>
     </div>
@@ -554,8 +540,7 @@ body {
 </main>
 
 <script>
-// REAL RPi DATA - NO SIMULATION
-// CHANGED: 50 points instead of 20 for longer history
+// REAL RPi DATA - Show EXACT values from RPi
 let chartData = {
     temperatures: [],
     currents: [],
@@ -565,9 +550,9 @@ let chartData = {
 };
 
 let chart;
-const MAX_POINTS = 50;  // CHANGED: Show 50 points for better trend analysis
+const MAX_POINTS = 50;
 
-// Initialize chart with proportional sizing
+// Initialize chart
 function initChart() {
     const ctx = document.getElementById('combinedChart').getContext('2d');
     
@@ -586,7 +571,7 @@ function initChart() {
                     borderColor: '#0ea5e9',
                     backgroundColor: 'rgba(14, 165, 233, 0.1)',
                     borderWidth: 2,
-                    tension: 0.4,
+                    tension: 0.3,
                     fill: true,
                     pointRadius: 2,
                     pointHoverRadius: 4,
@@ -598,7 +583,7 @@ function initChart() {
                     borderColor: '#facc15',
                     backgroundColor: 'rgba(250, 204, 21, 0.1)',
                     borderWidth: 2,
-                    tension: 0.4,
+                    tension: 0.3,
                     fill: true,
                     pointRadius: 2,
                     pointHoverRadius: 4,
@@ -610,7 +595,7 @@ function initChart() {
                     borderColor: '#ef4444',
                     backgroundColor: 'rgba(239, 68, 68, 0.1)',
                     borderWidth: 2,
-                    tension: 0.4,
+                    tension: 0.3,
                     fill: true,
                     pointRadius: 2,
                     pointHoverRadius: 4,
@@ -622,7 +607,7 @@ function initChart() {
                     borderColor: '#a855f7',
                     backgroundColor: 'rgba(168, 85, 247, 0.1)',
                     borderWidth: 2,
-                    tension: 0.4,
+                    tension: 0.3,
                     fill: true,
                     pointRadius: 2,
                     pointHoverRadius: 4,
@@ -684,104 +669,87 @@ function initChart() {
     });
 }
 
-// Update dashboard with REAL RPi data
+// Update dashboard with REAL RPi data - SHOW EXACT VALUES
 async function fetchRealData() {
     try {
         const response = await fetch('/api/latest-data?_=' + Date.now());
         const data = await response.json();
         
-        // Check if we have real data
-        if (data.has_data === false || !data.temperature) {
-            // No data yet - show waiting state
-            document.getElementById('system-status-header').textContent = 'WAITING';
-            document.getElementById('system-status-header').style.color = '#fbbf24';
-            document.getElementById('status-chip').className = 'waiting-chip';
-            document.getElementById('status-chip').innerHTML = '● WAITING FOR RPi';
-            document.getElementById('temperature-value').textContent = '--';
-            document.getElementById('current-value').textContent = '--';
-            document.getElementById('hotspot-value').textContent = '--%';
-            document.getElementById('overload-value').textContent = '--%';
-            document.getElementById('hotspot-bar').style.width = '0%';
-            document.getElementById('overload-bar').style.width = '0%';
-            document.getElementById('recommendation-text').textContent = 'Waiting for Raspberry Pi to connect...';
-            document.getElementById('breaker-state').textContent = 'Waiting';
-            document.getElementById('breaker-state').className = 'breaker-state-text Waiting';
-            return;
+        // Debug: See what we're getting
+        console.log('📊 RPi Data Received:', data);
+        
+        // Check if we have data (any temperature value that's not null)
+        if (data && data.temperature !== undefined && data.temperature !== null) {
+            // Update KPI cards
+            document.getElementById('temperature-value').textContent = data.temperature.toFixed(1);
+            document.getElementById('current-value').textContent = data.current.toFixed(2);
+            document.getElementById('temperature-note').textContent = 'Real-time sensor data';
+            document.getElementById('current-note').textContent = 'Real-time sensor data';
+            
+            // Get ML probabilities - SHOW EXACT VALUES (no filtering)
+            let hotProb = 0;
+            let ovlProb = 0;
+            
+            if (data.ml && data.ml.hotspot_prob !== undefined) {
+                hotProb = data.ml.hotspot_prob * 100;
+                ovlProb = data.ml.overload_prob * 100;
+            } else if (data.hotspot_prob !== undefined) {
+                hotProb = data.hotspot_prob * 100;
+                ovlProb = data.overload_prob * 100;
+            }
+            
+            // Display EXACT probabilities (even if 0.1% or 99.9%)
+            document.getElementById('hotspot-value').textContent = hotProb.toFixed(1) + '%';
+            document.getElementById('overload-value').textContent = ovlProb.toFixed(1) + '%';
+            document.getElementById('hotspot-bar').style.width = hotProb + '%';
+            document.getElementById('overload-bar').style.width = ovlProb + '%';
+            document.getElementById('hotspot-percent').textContent = `ML Prediction: ${hotProb.toFixed(1)}%`;
+            document.getElementById('overload-percent').textContent = `ML Prediction: ${ovlProb.toFixed(1)}%`;
+            
+            // Color based on risk level
+            const hotColor = hotProb > 70 ? '#ef4444' : hotProb > 65 ? '#fbbf24' : '#22c55e';
+            const ovlColor = ovlProb > 70 ? '#ef4444' : ovlProb > 65 ? '#fbbf24' : '#22c55e';
+            document.getElementById('hotspot-bar').style.backgroundColor = hotColor;
+            document.getElementById('overload-bar').style.backgroundColor = ovlColor;
+            
+            // Update breaker state
+            const breakerState = data.breakerState || data.state || 'Normal';
+            const stateElem = document.getElementById('breaker-state');
+            stateElem.textContent = breakerState;
+            stateElem.className = `breaker-state-text ${breakerState}`;
+            document.getElementById('state-note').textContent = `ML Analysis: ${breakerState}`;
+            
+            // Update recommendation
+            if (data.action) {
+                document.getElementById('recommendation-text').textContent = data.action;
+            }
+            
+            // Update chart
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit', second:'2-digit' });
+            
+            chartData.temperatures.push(data.temperature);
+            chartData.currents.push(data.current);
+            chartData.hotspots.push(hotProb);
+            chartData.overloads.push(ovlProb);
+            chartData.timestamps.push(timeStr);
+            
+            // Keep last MAX_POINTS
+            if (chartData.temperatures.length > MAX_POINTS) {
+                chartData.temperatures.shift();
+                chartData.currents.shift();
+                chartData.hotspots.shift();
+                chartData.overloads.shift();
+                chartData.timestamps.shift();
+            }
+            
+            updateChart();
+            
+            // Add to history table
+            addToHistory(data, hotProb, ovlProb, breakerState);
         }
-        
-        // We have real data!
-        document.getElementById('system-status-header').textContent = 'LIVE RPi';
-        document.getElementById('system-status-header').style.color = '#22c55e';
-        document.getElementById('status-chip').className = 'live-chip';
-        document.getElementById('status-chip').innerHTML = '● LIVE RPi DATA';
-        
-        // Update KPI cards
-        document.getElementById('temperature-value').textContent = data.temperature.toFixed(1);
-        document.getElementById('current-value').textContent = data.current.toFixed(2);
-        
-        // Update ML probabilities
-        let hotProb = 0;
-        let ovlProb = 0;
-        
-        if (data.ml && data.ml.hotspot_prob !== undefined) {
-            hotProb = data.ml.hotspot_prob * 100;
-            ovlProb = data.ml.overload_prob * 100;
-        } else if (data.hotspot_prob !== undefined) {
-            hotProb = data.hotspot_prob * 100;
-            ovlProb = data.overload_prob * 100;
-        }
-        
-        // Update probability displays
-        document.getElementById('hotspot-value').textContent = hotProb.toFixed(1) + '%';
-        document.getElementById('overload-value').textContent = ovlProb.toFixed(1) + '%';
-        document.getElementById('hotspot-bar').style.width = hotProb + '%';
-        document.getElementById('overload-bar').style.width = ovlProb + '%';
-        
-        // Color based on risk level
-        const hotColor = hotProb > 70 ? '#ef4444' : hotProb > 65 ? '#fbbf24' : '#22c55e';
-        const ovlColor = ovlProb > 70 ? '#ef4444' : ovlProb > 65 ? '#fbbf24' : '#22c55e';
-        document.getElementById('hotspot-bar').style.backgroundColor = hotColor;
-        document.getElementById('overload-bar').style.backgroundColor = ovlColor;
-        
-        // Update breaker state
-        const breakerState = data.breakerState || data.state || 'Normal';
-        const stateElem = document.getElementById('breaker-state');
-        stateElem.textContent = breakerState;
-        stateElem.className = `breaker-state-text ${breakerState}`;
-        
-        // Update recommendation
-        if (data.action) {
-            document.getElementById('recommendation-text').textContent = data.action;
-        }
-        
-        // Update chart with new data - CHANGED: Using MAX_POINTS = 50
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit', second:'2-digit' });
-        
-        chartData.temperatures.push(data.temperature);
-        chartData.currents.push(data.current);
-        chartData.hotspots.push(hotProb);
-        chartData.overloads.push(ovlProb);
-        chartData.timestamps.push(timeStr);
-        
-        // Keep last MAX_POINTS (50) for better trend analysis
-        if (chartData.temperatures.length > MAX_POINTS) {
-            chartData.temperatures.shift();
-            chartData.currents.shift();
-            chartData.hotspots.shift();
-            chartData.overloads.shift();
-            chartData.timestamps.shift();
-        }
-        
-        updateChart();
-        
-        // Add to events history
-        addToHistory(data, hotProb, ovlProb, breakerState);
-        
     } catch (error) {
         console.error('Error fetching data:', error);
-        document.getElementById('system-status-header').textContent = 'ERROR';
-        document.getElementById('system-status-header').style.color = '#ef4444';
     }
 }
 
@@ -793,7 +761,7 @@ function updateChart() {
         chart.data.datasets[1].data = chartData.currents;
         chart.data.datasets[2].data = chartData.hotspots;
         chart.data.datasets[3].data = chartData.overloads;
-        chart.update('none'); // 'none' for faster updates
+        chart.update('none');
     }
 }
 
@@ -801,7 +769,7 @@ function updateChart() {
 function addToHistory(data, hotProb, ovlProb, breakerState) {
     const tbody = document.getElementById('log-body');
     
-    // Remove empty placeholder if exists
+    // Remove empty placeholder if it's the waiting message
     if (tbody.children.length === 1 && tbody.children[0].innerText.includes('Waiting')) {
         tbody.innerHTML = '';
     }
