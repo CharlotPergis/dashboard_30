@@ -25,6 +25,7 @@ app = Flask(__name__,
             static_folder='static')
 CORS(app)
 
+# START EMPTY - NO DEFAULT VALUES
 latest_data_store = {}
 
 print("🔥 INITIALIZING SYSTEM...")
@@ -432,6 +433,7 @@ def update_data():
         "temperature": float(temp),
         "current": float(current),
         "state": state,
+        "breakerState": state,  # Add this for dashboard compatibility
         "status": status,
         "action": action,
         "supabase_sync": supabase_success,
@@ -524,7 +526,28 @@ def logs_page():
 
 @app.route("/api/latest-data")
 def latest():
-    return jsonify(latest_data_store)
+    """Return latest data - shows waiting message if no RPi data"""
+    if not latest_data_store or len(latest_data_store) == 0:
+        return jsonify({
+            "has_data": False,
+            "message": "Waiting for Raspberry Pi to connect...",
+            "temperature": None,
+            "current": None,
+            "state": "Waiting",
+            "breakerState": "Waiting",
+            "status": "No data received yet",
+            "action": "Start the Raspberry Pi sensor script to begin monitoring",
+            "ml": {"hotspot_prob": 0, "overload_prob": 0},
+            "time": datetime.now().strftime("%H:%M:%S")
+        })
+    
+    # Ensure breakerState exists for dashboard
+    response_data = dict(latest_data_store)
+    if 'breakerState' not in response_data:
+        response_data['breakerState'] = response_data.get('state', 'Normal')
+    response_data['has_data'] = True
+    
+    return jsonify(response_data)
 
 @app.route("/api/health")
 def health():
@@ -534,7 +557,8 @@ def health():
         "supabase_connected": supabase is not None,
         "email_enabled": email_enabled,
         "buffer_size": len(temp_buffer_short),
-        "buffer_max": temp_buffer_short.maxlen if temp_buffer_short else 0
+        "buffer_max": temp_buffer_short.maxlen if temp_buffer_short else 0,
+        "latest_data_available": bool(latest_data_store and len(latest_data_store) > 0)
     })
 
 # =========================================================
@@ -595,6 +619,24 @@ def get_full_history():
         return jsonify({"success": False, "error": str(e), "data": []}), 500
 
 # =========================================================
+# DEBUG ENDPOINT - Check what data is stored
+# =========================================================
+@app.route("/api/debug")
+def debug():
+    """Debug endpoint to see current data"""
+    return jsonify({
+        "latest_data_store": latest_data_store,
+        "has_data": bool(latest_data_store and len(latest_data_store) > 0),
+        "buffer_sizes": {
+            "temp_short": len(temp_buffer_short),
+            "temp_long": len(temp_buffer_long),
+            "current_short": len(current_buffer_short),
+            "current_long": len(current_buffer_long)
+        },
+        "models_loaded": True
+    })
+
+# =========================================================
 # RUN SERVER
 # =========================================================
 if __name__ == "__main__":
@@ -607,6 +649,10 @@ if __name__ == "__main__":
     print(f"⚡ Thresholds: Warning={WARNING_THRESHOLD}, Critical={CRITICAL_THRESHOLD}")
     print(f"📊 Buffer size: {temp_buffer_short.maxlen if temp_buffer_short else 10}")
     print("===================================")
-    print("\n💡 TIP: Use /api/test-model to verify model responds to different inputs")
-    print("💡 TIP: Watch the console logs to see real-time probability calculations\n")
+    print("\n⏳ Waiting for Raspberry Pi to connect...")
+    print("🌐 Dashboard available at: http://localhost:5000")
+    print("💡 TIP: Use /api/test-model to verify model responds to different inputs")
+    print("💡 TIP: Watch the console logs to see real-time probability calculations")
+    print("💡 TIP: Use /api/debug to check current data state")
+    print("="*50)
     app.run(host="0.0.0.0", port=5000, debug=False)
