@@ -6,6 +6,17 @@ let historyData = [];
 let combinedCtx;
 let fetchInterval = null;
 
+// Helper function to get Philippines time (UTC+8)
+function getPhilippinesTime() {
+    return new Date().toLocaleString('en-PH', {
+        timeZone: 'Asia/Manila',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+}
+
 function initCombinedChart() {
     const canvas = document.getElementById("combinedChart");
     if (!canvas) return;
@@ -121,14 +132,29 @@ function renderHistoryTable() {
 }
 
 function addToHistory(data) {
+    // ✅ FIXED: Use Philippines time instead of UTC
+    const phTime = new Date().toLocaleString('en-PH', {
+        timeZone: 'Asia/Manila',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+    
     historyData.unshift({ 
-        time: new Date().toLocaleTimeString(), 
+        time: phTime,  // ← NOW USING PHILIPPINES TIME
         temperature: data.temperature, 
         current: data.current, 
         breakerState: data.breakerState, 
         hotspotProb: data.ml?.hotspot_prob || 0, 
         overloadProb: data.ml?.overload_prob || 0 
     });
+    
+    // Limit history to 50 items
+    if (historyData.length > 50) historyData.pop();
     
     renderHistoryTable();
     saveToLocalStorage();
@@ -150,7 +176,16 @@ async function fetchRealData() {
 
 function updateDashboard(data) {
     if (!data) return;
-    const timeLabel = new Date().toLocaleTimeString();
+    
+    // ✅ FIXED: Use Philippines time for the chart labels
+    const timeLabel = new Date().toLocaleString('en-PH', {
+        timeZone: 'Asia/Manila',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+    
     timeLabels.push(timeLabel);
     tempData.push(data.temperature);
     currentData.push(data.current);
