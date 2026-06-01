@@ -318,7 +318,8 @@ def update_data():
     # USE PROBABILITIES COMING DIRECTLY FROM RPi
     # WITH SAFE DEFAULT VALUES
     # ============================================
-    
+    X_hot = build_hotspot_X(temp, current)
+    X_ovr = build_overload_X(temp, current)
     # Safe extraction with defaults to prevent KeyError
     hot_prob = float(data.get("hotspot_prob", 0))
     ovl_prob = float(data.get("overload_prob", 0))
