@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, render_template
 import joblib
 import os
+import gdown
 import time
 from flask_cors import CORS
 from flask_mail import Mail, Message
@@ -34,20 +35,32 @@ print("🔥 INITIALIZING SYSTEM...")
 # =========================================================
 # LOAD MODELS
 # =========================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, "ml")
+os.makedirs(MODEL_DIR, exist_ok=True)
 
-hotspot_model = joblib.load(
-    os.path.join(BASE_DIR, "ml/hotspot_model.pkl")
-)
+HOTSPOT_PATH = os.path.join(MODEL_DIR, "hotspot_model.pkl")
+OVERLOAD_PATH = os.path.join(MODEL_DIR, "overload_model.pkl")
 
-overload_model = joblib.load(
-    os.path.join(BASE_DIR, "ml/overload_model.pkl")
-)
+
+def download_if_missing(file_id, output_path):
+    if not os.path.exists(output_path):
+        print(f"⬇ Downloading model: {output_path}")
+        url = f"https://drive.google.com/uc?id={file_id}"
+        gdown.download(url, output_path, quiet=False)
+
+
+# DOWNLOAD MODELS FROM GOOGLE DRIVE
+download_if_missing("1t0AFcMD8VfsCJjK6NHkM8-O5rlZh9-2j", HOTSPOT_PATH)
+download_if_missing("1LV1QmQmT1JL8fG5RoXZn-ae44_K12xVn", OVERLOAD_PATH)
+
+# LOAD MODELS
+hotspot_model = joblib.load(HOTSPOT_PATH)
+overload_model = joblib.load(OVERLOAD_PATH)
 
 HOTSPOT_FEATURES = hotspot_model.feature_names_in_.tolist()
 OVERLOAD_FEATURES = overload_model.feature_names_in_.tolist()
 
-print("✓ ML models loaded")
+print("✓ ML models loaded successfully (Google Drive)")
 
 # =========================================================
 # FEATURE BUILDERS
