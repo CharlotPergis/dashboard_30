@@ -20,20 +20,12 @@ from feature_engine import (
 )
 
 # =========================================================
-# INIT
+# BASE DIR
 # =========================================================
-app = Flask(__name__,
-            template_folder='templates',
-            static_folder='static')
-CORS(app)
-
-# START EMPTY - NO DEFAULT VALUES
-latest_data_store = {}
-
-print("🔥 INITIALIZING SYSTEM...")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # =========================================================
-# LOAD MODELS
+# MODEL SETUP
 # =========================================================
 MODEL_DIR = os.path.join(BASE_DIR, "ml")
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -49,18 +41,32 @@ def download_if_missing(file_id, output_path):
         gdown.download(url, output_path, quiet=False)
 
 
-# DOWNLOAD MODELS FROM GOOGLE DRIVE
+# DOWNLOAD MODELS
 download_if_missing("1t0AFcMD8VfsCJjK6NHkM8-O5rlZh9-2j", HOTSPOT_PATH)
 download_if_missing("1LV1QmQmT1JL8fG5RoXZn-ae44_K12xVn", OVERLOAD_PATH)
 
 # LOAD MODELS
-hotspot_model = joblib.load(HOTSPOT_PATH)
-overload_model = joblib.load(OVERLOAD_PATH)
+hotspot_model = None
+overload_model = None
 
-HOTSPOT_FEATURES = hotspot_model.feature_names_in_.tolist()
-OVERLOAD_FEATURES = overload_model.feature_names_in_.tolist()
+try:
+    hotspot_model = joblib.load(HOTSPOT_PATH)
+    overload_model = joblib.load(OVERLOAD_PATH)
+    print("✓ ML models loaded successfully (Google Drive)")
+except Exception as e:
+    print(f"❌ Model loading failed: {e}")
 
-print("✓ ML models loaded successfully (Google Drive)")
+# =========================================================
+# FLASK INIT (ONLY ONCE)
+# =========================================================
+app = Flask(__name__,
+            template_folder='templates',
+            static_folder='static')
+CORS(app)
+
+latest_data_store = {}
+
+print("🔥 INITIALIZING SYSTEM...")
 
 # =========================================================
 # FEATURE BUILDERS
