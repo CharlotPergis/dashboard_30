@@ -155,6 +155,11 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
   padding: 48px;
   color: #94a3b8;
 }
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 @media (max-width: 768px) {
   .dashboard { padding: 16px; }
   .history-header { flex-direction: column; text-align: center; }
@@ -169,7 +174,7 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
   <div class="history-header">
     <div>
       <h1>⚡ Breaker Monitoring Logs</h1>
-      <p class="subtext">Full historical data from Supabase database</p>
+      <p class="subtext">Full historical data from Supabase database — filters persist even during background refresh</p>
     </div>
     <a href="/" class="btn-back">← Back to Dashboard</a>
   </div>
@@ -234,8 +239,9 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
     </div>
     
     <div class="stats-bar">
-      <span>📋 Total Logs: <strong id="total-count">0</strong></span>
-      <span>🎯 Filtered: <strong id="filtered-count">0</strong></span>
+      <span>📋 Total Logs in DB: <strong id="total-count">0</strong></span>
+      <span>🎯 Filtered View: <strong id="filtered-count">0</strong></span>
+      <span>🔄 Last Updated: <strong id="last-update-time">--:--:--</strong></span>
       <span>📡 Data Source: <strong style="color:#22c55e;">Supabase Cloud</strong></span>
     </div>
   </div>
@@ -265,9 +271,11 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
 
 <script>
 (function() {
+  // DOM elements
   const fullLogBody = document.getElementById("full-log-body");
   const totalCountSpan = document.getElementById("total-count");
   const filteredCountSpan = document.getElementById("filtered-count");
+  const lastUpdateSpan = document.getElementById("last-update-time");
   const startDateInput = document.getElementById("startDate");
   const endDateInput = document.getElementById("endDate");
   const startTimeInput = document.getElementById("startTime");
@@ -282,10 +290,13 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
   const quick24h = document.getElementById("quick24h");
   const quick7d = document.getElementById("quick7d");
   
+  // Core data & state
   let allLogs = [];
   let currentFilteredLogs = [];
-
-  // Helper functions
+  let refreshTimer = null;
+  let isInitialLoad = true;
+  
+  // Helper Functions
   function parseTimestamp(timestamp) { 
     if (!timestamp) return new Date(); 
     const date = new Date(timestamp); 
@@ -300,38 +311,29 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
   function createDateFromInputs(dateValue, timeValue) { 
     if (!dateValue) return null; 
     const timeStr = timeValue || "00:00"; 
-    return new Date(`${dateValue}T${timeStr}:00`); 
+    const d = new Date(`${dateValue}T${timeStr}:00`);
+    return isNaN(d.getTime()) ? null : d;
   }
-
-  // Get status display based on app.py thresholds
+  
   function getSystemStatus(breakerState, hotspotProb, overloadProb) {
     if (breakerState === "WarmingUp") {
       return "System initializing...";
     } else if (breakerState === "Normal") {
       return "System stable";
     } else if (breakerState === "Warning") {
-      if (hotspotProb >= 0.65 && overloadProb >= 0.75) {
-        return "Elevated temperature & High load detected";
-      } else if (hotspotProb >= 0.65) {
-        return "Elevated temperature detected";
-      } else if (overloadProb >= 0.75) {
-        return "High load detected";
-      }
+      if (hotspotProb >= 0.65 && overloadProb >= 0.75) return "Elevated temperature & High load detected";
+      else if (hotspotProb >= 0.65) return "Elevated temperature detected";
+      else if (overloadProb >= 0.75) return "High load detected";
       return "Warning - Monitor system";
     } else if (breakerState === "Critical") {
-      if (hotspotProb >= 0.70 && overloadProb >= 0.90) {
-        return "Severe overheating & overload detected";
-      } else if (hotspotProb >= 0.70) {
-        return "Severe overheating detected";
-      } else if (overloadProb >= 0.90) {
-        return "Severe overload detected";
-      }
+      if (hotspotProb >= 0.70 && overloadProb >= 0.90) return "Severe overheating & overload detected";
+      else if (hotspotProb >= 0.70) return "Severe overheating detected";
+      else if (overloadProb >= 0.90) return "Severe overload detected";
       return "Critical - Immediate action required";
     }
     return "Unknown state";
   }
-
-  // Get CSS class for breaker state
+  
   function getStateClass(breakerState) {
     switch(breakerState) {
       case "Critical": return "state-critical";
@@ -340,30 +342,26 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
       default: return "state-normal";
     }
   }
-
-  // Get icon for breaker state
+  
   function getStateIcon(breakerState) {
     switch(breakerState) {
-      case "Critical": return "🔴 ";
-      case "Warning": return "⚠️ ";
-      case "WarmingUp": return "🔥 ";
-      default: return "✅ ";
+      case "Critical": return "🔴";
+      case "Warning": return "⚠️";
+      case "WarmingUp": return "🔥";
+      default: return "✅";
     }
   }
-
-  // Convert API data to the format expected by the table
+  
   function convertApiData(apiData) {
     if (!apiData || !Array.isArray(apiData)) return [];
-    
     return apiData.map(item => {
       const breakerState = item.breaker_state || "Normal";
-      const hotspotProb = item.hotspot_probability || 0;
-      const overloadProb = item.overload_probability || 0;
-      
+      const hotspotProb = item.hotspot_probability ?? 0;
+      const overloadProb = item.overload_probability ?? 0;
       return {
         timestamp: item.created_at,
-        temperature: item.temperature_c,
-        current: item.current_a,
+        temperature: item.temperature_c ?? 0,
+        current: item.current_a ?? 0,
         hotspot_prob: hotspotProb,
         overload_prob: overloadProb,
         breakerState: breakerState,
@@ -374,85 +372,89 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
       };
     });
   }
-
-  // Fetch data from your backend API
-  async function loadData() {
-    try {
-      fullLogBody.innerHTML = '<tr><td colspan="8" class="loading-spinner">⏳ Loading data from Supabase...</td></tr>';
-      
-      const response = await fetch('/api/history');
-      const result = await response.json();
-      
-      // Handle both response formats
-      let apiData = result.success ? result.data : (Array.isArray(result) ? result : []);
-      
-      console.log(`✅ Fetched ${apiData.length} records from Supabase API`);
-      
-      // Convert API data to the format expected by the table
-      allLogs = convertApiData(apiData);
-      
-      // Sort by timestamp (newest first)
-      allLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-      
-      currentFilteredLogs = [...allLogs];
-      renderTable();
-      updateStats();
-      
-      if (allLogs.length === 0) {
-        fullLogBody.innerHTML = '<tr><td colspan="8" class="loading-spinner">📭 No data found in database. Send some sensor data first.</td></tr>';
-      }
-    } catch (error) {
-      console.error("❌ Error loading data from API:", error);
-      fullLogBody.innerHTML = '<tr><td colspan="8" class="loading-spinner" style="color:#ef4444;">❌ Error connecting to server. Make sure the Flask backend is running.</td></tr>';
-      allLogs = [];
-      currentFilteredLogs = [];
-    }
+  
+  function captureCurrentFilterValues() {
+    return {
+      startDate: startDateInput?.value || "",
+      endDate: endDateInput?.value || "",
+      startTime: startTimeInput?.value || "",
+      endTime: endTimeInput?.value || "",
+      status: statusFilter?.value || "all",
+      searchTerm: searchInput?.value || "",
+      preset: dateRangePreset?.value || "custom"
+    };
   }
-
-  function applyAllFilters() {
-    let filtered = [...allLogs];
+  
+  function computeFiltersOnDataset(logs, filterState = null) {
+    if (!logs.length) return [];
+    let filtered = [...logs];
+    const state = filterState || captureCurrentFilterValues();
     
-    // Date range filter
-    const startDate = startDateInput?.value;
-    const endDate = endDateInput?.value;
-    const startTime = startTimeInput?.value;
-    const endTime = endTimeInput?.value;
-    
-    if (startDate) { 
-      const startDateTime = createDateFromInputs(startDate, startTime); 
+    if (state.startDate) {
+      const startDateTime = createDateFromInputs(state.startDate, state.startTime);
       if (startDateTime) {
         filtered = filtered.filter(log => parseTimestamp(log.timestamp) >= startDateTime);
       }
     }
-    
-    if (endDate) { 
-      const endDateTime = createDateFromInputs(endDate, endTime); 
+    if (state.endDate) {
+      const endDateTime = createDateFromInputs(state.endDate, state.endTime);
       if (endDateTime) {
         filtered = filtered.filter(log => parseTimestamp(log.timestamp) <= endDateTime);
       }
     }
     
-    // Status filter - matches app.py states exactly
-    const status = statusFilter?.value || "all";
-    if (status !== "all") {
-      filtered = filtered.filter(log => log.breakerState === status);
+    if (state.status && state.status !== "all") {
+      filtered = filtered.filter(log => log.breakerState === state.status);
     }
     
-    // Search filter
-    const searchTerm = searchInput?.value.toLowerCase().trim() || "";
-    if (searchTerm) {
+    if (state.searchTerm && state.searchTerm.trim() !== "") {
+      const term = state.searchTerm.toLowerCase().trim();
       filtered = filtered.filter(log => 
-        log.breakerState.toLowerCase().includes(searchTerm) ||
-        log.systemStatus.toLowerCase().includes(searchTerm) ||
-        log.action.toLowerCase().includes(searchTerm) ||
-        log.temperature.toString().includes(searchTerm) ||
-        log.current.toString().includes(searchTerm)
+        log.breakerState.toLowerCase().includes(term) ||
+        log.systemStatus.toLowerCase().includes(term) ||
+        log.action.toLowerCase().includes(term) ||
+        log.temperature.toString().includes(term) ||
+        log.current.toString().includes(term)
       );
     }
     
+    return filtered;
+  }
+  
+  function reapplyFiltersAndRender() {
+    if (!allLogs.length) {
+      currentFilteredLogs = [];
+      renderTable();
+      updateStats();
+      return;
+    }
+    const filterVals = captureCurrentFilterValues();
+    const filtered = computeFiltersOnDataset(allLogs, filterVals);
     currentFilteredLogs = filtered;
     renderTable();
     updateStats();
+  }
+  
+  function onNewDataLoaded(newLogs) {
+    allLogs = newLogs;
+    allLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const filterVals = captureCurrentFilterValues();
+    currentFilteredLogs = computeFiltersOnDataset(allLogs, filterVals);
+    renderTable();
+    updateStats();
+    updateLastUpdateTime();
+    
+    if (!isInitialLoad) {
+      showToast(`🔄 Data refreshed • ${allLogs.length} total records • filters preserved`, false, 2000);
+    }
+    isInitialLoad = false;
+  }
+  
+  function updateLastUpdateTime() {
+    if (lastUpdateSpan) {
+      const now = new Date();
+      lastUpdateSpan.textContent = now.toLocaleTimeString();
+    }
   }
   
   function updateStats() { 
@@ -466,20 +468,22 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
     
     if (currentFilteredLogs.length === 0) {
       const emptyRow = document.createElement("tr");
-      emptyRow.innerHTML = '<td colspan="8" style="text-align:center; padding:48px;">📭 No logs found matching your filters.</td>';
+      emptyRow.innerHTML = '<td colspan="8" style="text-align:center; padding:48px;">📭 No logs match your current filters. Try adjusting search or status.</td>';
       fullLogBody.appendChild(emptyRow);
       return;
     }
     
     currentFilteredLogs.forEach(log => {
       const row = document.createElement("tr");
+      const hotspotPercent = (log.hotspot_prob * 100).toFixed(1);
+      const overloadPercent = (log.overload_prob * 100).toFixed(1);
       row.innerHTML = `
-        <td>${formatDisplayDate(parseTimestamp(log.timestamp))}</td>
+        <td style="white-space: nowrap;">${formatDisplayDate(parseTimestamp(log.timestamp))}</td>
         <td><strong>${log.temperature.toFixed(1)}°C</strong></td>
         <td><strong>${log.current.toFixed(1)}A</strong></td>
-        <td>${(log.hotspot_prob * 100).toFixed(1)}%</td>
-        <td>${(log.overload_prob * 100).toFixed(1)}%</td>
-        <td class="${log.stateClass}">${log.stateIcon}${log.breakerState}</td>
+        <td>${hotspotPercent}%</td>
+        <td>${overloadPercent}%</td>
+        <td class="${log.stateClass}"><span class="status-badge">${log.stateIcon} ${log.breakerState}</span></td>
         <td style="max-width: 250px; font-size: 12px;">${log.systemStatus}</td>
         <td style="max-width: 250px; font-size: 12px;">${log.action}</td>
       `;
@@ -487,27 +491,98 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
     });
   }
   
-  function clearAllFilters() { 
-    if (startDateInput) startDateInput.value = ""; 
-    if (endDateInput) endDateInput.value = ""; 
-    if (startTimeInput) startTimeInput.value = ""; 
-    if (endTimeInput) endTimeInput.value = ""; 
-    if (statusFilter) statusFilter.value = "all"; 
-    if (searchInput) searchInput.value = ""; 
-    if (dateRangePreset) dateRangePreset.value = "custom"; 
-    currentFilteredLogs = [...allLogs]; 
-    renderTable(); 
-    updateStats(); 
-    showToast("✅ All filters cleared"); 
+  async function fetchDataFromBackend() {
+    try {
+      const response = await fetch('/api/history');
+      const result = await response.json();
+      let apiData = result.success ? result.data : (Array.isArray(result) ? result : []);
+      console.log(`[fetch] Retrieved ${apiData.length} records from Supabase`);
+      const converted = convertApiData(apiData);
+      onNewDataLoaded(converted);
+      return converted;
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      if (allLogs.length === 0) {
+        fullLogBody.innerHTML = '<tr><td colspan="8" class="loading-spinner" style="color:#ef4444;">❌ Error connecting to server. Make sure Flask backend is running.</td></tr>';
+      } else {
+        showToast("⚠️ Background refresh failed, but existing data shown", true, 3000);
+      }
+      return allLogs;
+    }
   }
   
-  function showToast(message, isError = false) { 
-    const toast = document.createElement('div'); 
-    toast.className = 'toast'; 
-    toast.style.backgroundColor = isError ? '#ef4444' : '#22c55e'; 
-    toast.textContent = message; 
-    document.body.appendChild(toast); 
-    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 3000); 
+  function applyFiltersFromUI() {
+    reapplyFiltersAndRender();
+    showToast("✅ Filters applied", false, 1500);
+  }
+  
+  function clearAllFiltersUI() {
+    if (startDateInput) startDateInput.value = "";
+    if (endDateInput) endDateInput.value = "";
+    if (startTimeInput) startTimeInput.value = "";
+    if (endTimeInput) endTimeInput.value = "";
+    if (statusFilter) statusFilter.value = "all";
+    if (searchInput) searchInput.value = "";
+    if (dateRangePreset) dateRangePreset.value = "custom";
+    
+    const emptyFilterState = {
+      startDate: "", endDate: "", startTime: "", endTime: "", status: "all", searchTerm: "", preset: "custom"
+    };
+    currentFilteredLogs = computeFiltersOnDataset(allLogs, emptyFilterState);
+    renderTable();
+    updateStats();
+    showToast("🧹 All filters cleared — showing all records", false, 2000);
+  }
+  
+  function setQuickFilterHours(hours) {
+    const cutoff = new Date(Date.now() - hours * 3600000);
+    if (startDateInput) {
+      startDateInput.value = cutoff.toISOString().split('T')[0];
+      if (startTimeInput) startTimeInput.value = cutoff.toTimeString().slice(0,5);
+    }
+    if (endDateInput) endDateInput.value = "";
+    if (endTimeInput) endTimeInput.value = "";
+    if (statusFilter) statusFilter.value = "all";
+    if (searchInput) searchInput.value = "";
+    if (dateRangePreset) dateRangePreset.value = "custom";
+    reapplyFiltersAndRender();
+    showToast(`📊 Showing last ${hours} hour${hours > 1 ? 's' : ''}`, false, 1800);
+  }
+  
+  function setDateRangePresetUI(preset) {
+    const now = new Date();
+    let start = null, end = null;
+    switch(preset) {
+      case "today":
+        start = new Date(now); start.setHours(0,0,0,0);
+        end = new Date(now); end.setHours(23,59,59,999);
+        break;
+      case "yesterday":
+        start = new Date(now); start.setDate(start.getDate()-1); start.setHours(0,0,0,0);
+        end = new Date(start); end.setHours(23,59,59,999);
+        break;
+      case "week":
+        start = new Date(now); start.setDate(start.getDate()-7); start.setHours(0,0,0,0);
+        end = null;
+        break;
+      case "month":
+        start = new Date(now); start.setMonth(start.getMonth()-1); start.setHours(0,0,0,0);
+        end = null;
+        break;
+      default: return;
+    }
+    if (start && startDateInput) {
+      startDateInput.value = start.toISOString().split('T')[0];
+      if (startTimeInput) startTimeInput.value = "00:00";
+    }
+    if (end && endDateInput) {
+      endDateInput.value = end.toISOString().split('T')[0];
+      if (endTimeInput) endTimeInput.value = "23:59";
+    } else if (!end && endDateInput) {
+      endDateInput.value = "";
+      if (endTimeInput) endTimeInput.value = "";
+    }
+    reapplyFiltersAndRender();
   }
   
   function downloadCSV() {
@@ -515,11 +590,9 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
       showToast("⚠️ No logs available to download", true); 
       return; 
     }
-    
     try {
       const headers = ["Date Time", "Temperature (°C)", "Current (A)", "Hotspot Prob (%)", "Overload Prob (%)", "Breaker State", "System Status", "Recommended Action"];
       const csvRows = [headers];
-      
       currentFilteredLogs.forEach(log => {
         csvRows.push([
           formatDisplayDate(parseTimestamp(log.timestamp)),
@@ -532,7 +605,6 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
           `"${log.action.replace(/"/g, '""')}"`
         ]);
       });
-      
       const csvContent = csvRows.map(row => row.join(",")).join("\n");
       const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
@@ -544,108 +616,75 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-      showToast(`✅ Downloaded ${currentFilteredLogs.length} logs successfully!`);
+      showToast(`✅ Downloaded ${currentFilteredLogs.length} logs`, false);
     } catch (error) {
-      console.error("CSV Download error:", error);
-      showToast("❌ Error downloading CSV", true);
+      showToast("❌ CSV error", true);
     }
   }
   
-  function filterByHours(hours) { 
-    const cutoff = new Date(Date.now() - hours * 3600000); 
-    if (startDateInput) { 
-      startDateInput.value = cutoff.toISOString().split('T')[0]; 
-      if (startTimeInput) startTimeInput.value = cutoff.toTimeString().slice(0,5); 
-    } 
-    if (endDateInput) endDateInput.value = ""; 
-    if (endTimeInput) endTimeInput.value = ""; 
-    if (statusFilter) statusFilter.value = "all"; 
-    if (searchInput) searchInput.value = ""; 
-    if (dateRangePreset) dateRangePreset.value = "custom"; 
-    applyAllFilters(); 
-    showToast(`📊 Showing logs from last ${hours} hour${hours > 1 ? 's' : ''}`); 
+  function showToast(message, isError = false, duration = 2500) {
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.style.backgroundColor = isError ? '#ef4444' : '#22c55e';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, duration);
   }
   
-  function setDateRangePreset(preset) { 
-    const now = new Date(); 
-    let start = null, end = null; 
-    
-    switch(preset) { 
-      case "today": 
-        start = new Date(now); 
-        start.setHours(0,0,0,0); 
-        end = new Date(now); 
-        end.setHours(23,59,59,999); 
-        break; 
-      case "yesterday": 
-        start = new Date(now); 
-        start.setDate(start.getDate()-1); 
-        start.setHours(0,0,0,0); 
-        end = new Date(start); 
-        end.setHours(23,59,59,999); 
-        break; 
-      case "week": 
-        start = new Date(now); 
-        start.setDate(start.getDate()-7); 
-        start.setHours(0,0,0,0); 
-        end = null; 
-        break; 
-      case "month": 
-        start = new Date(now); 
-        start.setMonth(start.getMonth()-1); 
-        start.setHours(0,0,0,0); 
-        end = null; 
-        break; 
-      default: return; 
-    }
-    
-    if (start && startDateInput) { 
-      startDateInput.value = start.toISOString().split('T')[0]; 
-      if (startTimeInput) startTimeInput.value = "00:00"; 
-    } 
-    if (end && endDateInput) { 
-      endDateInput.value = end.toISOString().split('T')[0]; 
-      if (endTimeInput) endTimeInput.value = "23:59"; 
-    } 
-    applyAllFilters(); 
+  // ✅ FIXED: Auto-refresh mechanism without the bug
+  function startStableAutoRefresh(intervalMs = 10000) {
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(async () => {
+      try {
+        const response = await fetch('/api/history');
+        const result = await response.json();
+        let apiData = result.success ? result.data : (Array.isArray(result) ? result : []);
+        // FIXED: Direct conversion without erroneous variable
+        const freshConverted = convertApiData(apiData);
+        freshConverted.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        allLogs = freshConverted;
+        const currentFilters = captureCurrentFilterValues();
+        currentFilteredLogs = computeFiltersOnDataset(allLogs, currentFilters);
+        renderTable();
+        updateStats();
+        updateLastUpdateTime();
+      } catch (e) {
+        console.warn("Background refresh failed", e);
+      }
+    }, intervalMs);
   }
   
-  // Auto-refresh every 10 seconds to get new data
-  function startAutoRefresh() { 
-    setInterval(() => { 
-      loadData(); 
-    }, 10000); 
-  }
-  
-  // Event listeners
-  if (applyFiltersBtn) applyFiltersBtn.addEventListener("click", applyAllFilters);
-  if (clearFiltersBtn) clearFiltersBtn.addEventListener("click", clearAllFilters);
+  // Event Binding
+  if (applyFiltersBtn) applyFiltersBtn.addEventListener("click", applyFiltersFromUI);
+  if (clearFiltersBtn) clearFiltersBtn.addEventListener("click", clearAllFiltersUI);
   if (downloadCsvBtn) downloadCsvBtn.addEventListener("click", downloadCSV);
-  if (quick1h) quick1h.addEventListener("click", () => filterByHours(1));
-  if (quick24h) quick24h.addEventListener("click", () => filterByHours(24));
-  if (quick7d) quick7d.addEventListener("click", () => filterByHours(168));
-  if (statusFilter) statusFilter.addEventListener("change", applyAllFilters);
-  
-  if (searchInput) { 
-    let searchTimeout; 
-    searchInput.addEventListener("input", () => { 
-      clearTimeout(searchTimeout); 
-      searchTimeout = setTimeout(applyAllFilters, 300); 
-    }); 
+  if (quick1h) quick1h.addEventListener("click", () => setQuickFilterHours(1));
+  if (quick24h) quick24h.addEventListener("click", () => setQuickFilterHours(24));
+  if (quick7d) quick7d.addEventListener("click", () => setQuickFilterHours(168));
+  if (statusFilter) statusFilter.addEventListener("change", applyFiltersFromUI);
+  if (searchInput) {
+    let debounceTimer;
+    searchInput.addEventListener("input", () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => applyFiltersFromUI(), 400);
+    });
   }
-  
-  if (dateRangePreset) dateRangePreset.addEventListener("change", (e) => { 
-    if (e.target.value !== "custom") setDateRangePreset(e.target.value); 
+  if (dateRangePreset) dateRangePreset.addEventListener("change", (e) => {
+    if (e.target.value !== "custom") {
+      setDateRangePresetUI(e.target.value);
+    }
   });
+  if (startDateInput) startDateInput.addEventListener("change", applyFiltersFromUI);
+  if (endDateInput) endDateInput.addEventListener("change", applyFiltersFromUI);
+  if (startTimeInput) startTimeInput.addEventListener("change", applyFiltersFromUI);
+  if (endTimeInput) endTimeInput.addEventListener("change", applyFiltersFromUI);
   
-  if (startDateInput) startDateInput.addEventListener("change", applyAllFilters);
-  if (endDateInput) endDateInput.addEventListener("change", applyAllFilters);
-  if (startTimeInput) startTimeInput.addEventListener("change", applyAllFilters);
-  if (endTimeInput) endTimeInput.addEventListener("change", applyAllFilters);
-  
-  // Initialize
-  loadData();
-  startAutoRefresh();
+  // Initialization
+  async function init() {
+    await fetchDataFromBackend();
+    startStableAutoRefresh(10000);
+  }
+  init();
 })();
 </script>
 </body>
