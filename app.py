@@ -144,10 +144,10 @@ except Exception as e:
 # THRESHOLDS (Version 2 thresholds preserved)
 # =========================================================
 WARMUP_SAMPLES = 10
-WARNING_THRESHOLD = 0.70
-CRITICAL_THRESHOLD = 0.80
+WARNING_THRESHOLD = 0.65
+CRITICAL_THRESHOLD = 0.70
 WARNING_OVL = 0.75
-CRITICAL_OVL = 0.85
+CRITICAL_OVL = 0.90
 
 # =========================================================
 # ALERT TRACKING (Enhanced with cooldown)
