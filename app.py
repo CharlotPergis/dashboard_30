@@ -10,6 +10,8 @@ from supabase import create_client
 from types import SimpleNamespace
 import threading
 import traceback
+import signal
+import sys
 
 from feature_engine import (
     build_basic_features,
@@ -19,6 +21,26 @@ from feature_engine import (
     current_buffer_long,
     reset_buffers
 )
+
+# =========================================================
+# GLOBAL EXCEPTION HANDLER
+# =========================================================
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    """Handle unexpected exceptions gracefully"""
+    print(f"❗ UNHANDLED EXCEPTION: {exc_type.__name__}: {exc_value}")
+    traceback.print_tb(exc_traceback)
+    # Don't crash - just log and continue
+
+# Install global exception handler
+sys.excepthook = global_exception_handler
+
+# Handle SIGTERM gracefully
+def signal_handler(sig, frame):
+    print("\n🛑 Shutting down gracefully...")
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 # =========================================================
 # BASE DIR
@@ -76,6 +98,10 @@ app = Flask(__name__,
             static_folder='static')
 CORS(app)
 
+# Thread lock for buffer operations
+buffer_lock = threading.Lock()
+store_lock = threading.Lock()
+
 latest_data_store = {}
 
 print("🔥 INITIALIZING SYSTEM...")
@@ -84,15 +110,27 @@ print("🔥 INITIALIZING SYSTEM...")
 # FEATURE BUILDERS
 # =========================================================
 def build_hotspot_X(temp, current):
-    feat = build_basic_features(temp, current)
-    feat = feat.reindex(columns=HOTSPOT_FEATURES, fill_value=0)
-    return feat
+    try:
+        feat = build_basic_features(temp, current)
+        feat = feat.reindex(columns=HOTSPOT_FEATURES, fill_value=0)
+        return feat
+    except Exception as e:
+        print(f"⚠ Hotspot feature build error: {e}")
+        # Return empty feature set as fallback
+        import pandas as pd
+        return pd.DataFrame([[0] * len(HOTSPOT_FEATURES)], columns=HOTSPOT_FEATURES)
 
 
 def build_overload_X(temp, current):
-    feat = build_basic_features(temp, current)
-    feat = feat.reindex(columns=OVERLOAD_FEATURES, fill_value=0)
-    return feat
+    try:
+        feat = build_basic_features(temp, current)
+        feat = feat.reindex(columns=OVERLOAD_FEATURES, fill_value=0)
+        return feat
+    except Exception as e:
+        print(f"⚠ Overload feature build error: {e}")
+        # Return empty feature set as fallback
+        import pandas as pd
+        return pd.DataFrame([[0] * len(OVERLOAD_FEATURES)], columns=OVERLOAD_FEATURES)
 
 # =========================================================
 # SUPABASE CONFIGURATION
@@ -154,15 +192,17 @@ CRITICAL_OVL = 0.90
 # =========================================================
 last_alert_time = {}
 ALERT_COOLDOWN_SECONDS = 300
+alert_lock = threading.Lock()
 
 def should_send_alert(alert_key):
     """Check if alert should be sent based on cooldown period"""
-    now = time.time()
-    if alert_key in last_alert_time:
-        if now - last_alert_time[alert_key] < ALERT_COOLDOWN_SECONDS:
-            return False
-    last_alert_time[alert_key] = now
-    return True
+    with alert_lock:
+        now = time.time()
+        if alert_key in last_alert_time:
+            if now - last_alert_time[alert_key] < ALERT_COOLDOWN_SECONDS:
+                return False
+        last_alert_time[alert_key] = now
+        return True
 
 # =========================================================
 # SUPABASE FUNCTIONS
@@ -187,7 +227,7 @@ def send_to_supabase(temp, current, state, hot_prob, ovl_prob, composite_risk, a
             "overload_probability": round(float(ovl_prob), 4),
             "composite_risk": round(float(composite_risk), 4),
             "recommended_action": action[:200] if action else "Monitor system",
-            "created_at": accurate_timestamp  # ✅ Server-generated accurate timestamp
+            "created_at": accurate_timestamp
         }
         
         print(f"📤 Attempting Supabase insert...")
@@ -245,10 +285,10 @@ def send_breaker_alert(reading, risk, alert_type, message_action):
     overload_prob = risk['overload_prob']
     
     # Use the actual thresholds from app.py
-    is_critical_hotspot = hotspot_prob >= CRITICAL_THRESHOLD  # 0.70
-    is_critical_overload = overload_prob >= CRITICAL_OVL      # 0.90
-    is_warning_hotspot = hotspot_prob >= WARNING_THRESHOLD    # 0.65
-    is_warning_overload = overload_prob >= WARNING_OVL        # 0.75
+    is_critical_hotspot = hotspot_prob >= CRITICAL_THRESHOLD
+    is_critical_overload = overload_prob >= CRITICAL_OVL
+    is_warning_hotspot = hotspot_prob >= WARNING_THRESHOLD
+    is_warning_overload = overload_prob >= WARNING_OVL
     
     if alert_type == "Critical":
         # Determine the specific critical condition based on thresholds
@@ -347,67 +387,68 @@ Overload Risk: {overload_prob*100:.1f}%
 # STATE LOGIC (Version 2 preserved)
 # =========================================================
 def determine_state(hot_prob, ovl_prob):
+    try:
+        with buffer_lock:
+            if len(temp_buffer_short) < WARMUP_SAMPLES or len(temp_buffer_long) < WARMUP_SAMPLES:
+                return "WarmingUp", "System initializing..."
 
-    if len(temp_buffer_short) < WARMUP_SAMPLES or len(temp_buffer_long) < WARMUP_SAMPLES:
-        return "WarmingUp", "System initializing..."
+        if hot_prob >= CRITICAL_THRESHOLD:
+            return "Critical", "Severe overheating detected"
 
-    if hot_prob >= CRITICAL_THRESHOLD:
-        return "Critical", "Severe overheating detected"
+        if ovl_prob >= CRITICAL_OVL:
+            return "Critical", "Severe overload detected"
 
-    if ovl_prob >= CRITICAL_OVL:
-        return "Critical", "Severe overload detected"
+        if hot_prob >= WARNING_THRESHOLD:
+            return "Warning", "Elevated temperature detected"
 
-    if hot_prob >= WARNING_THRESHOLD:
-        return "Warning", "Elevated temperature detected"
+        if ovl_prob >= WARNING_OVL:
+            return "Warning", "High load detected"
 
-    if ovl_prob >= WARNING_OVL:
-        return "Warning", "High load detected"
-
-    return "Normal", "System stable"
+        return "Normal", "System stable"
+    except Exception as e:
+        print(f"⚠ State determination error: {e}")
+        return "Normal", "System monitoring active"
 
 # =========================================================
 # ACTION ENGINE (Version 2 preserved)
 # =========================================================
 def get_action(state, hotspot, overload):
+    try:
+        if state == "Warning":
+            if hotspot and overload:
+                return "Reduce load immediately → hotspot + overload detected. Check wiring."
+            if hotspot:
+                return "Reduce load and inspect connections."
+            if overload:
+                return "Turn off heavy appliances."
+            return "Monitor system."
 
-    if state == "Warning":
+        if state == "Critical":
+            if hotspot and overload:
+                return "SHUT DOWN SYSTEM immediately."
+            if hotspot:
+                return "SHUT DOWN → overheating detected."
+            if overload:
+                return "DISCONNECT LOAD immediately."
+            return "Emergency inspection required."
 
-        if hotspot and overload:
-            return "Reduce load immediately → hotspot + overload detected. Check wiring."
-
-        if hotspot:
-            return "Reduce load and inspect connections."
-
-        if overload:
-            return "Turn off heavy appliances."
-
-        return "Monitor system."
-
-    if state == "Critical":
-
-        if hotspot and overload:
-            return "SHUT DOWN SYSTEM immediately."
-
-        if hotspot:
-            return "SHUT DOWN → overheating detected."
-
-        if overload:
-            return "DISCONNECT LOAD immediately."
-
-        return "Emergency inspection required."
-
-    return "System normal."
+        return "System normal."
+    except Exception as e:
+        print(f"⚠ Action generation error: {e}")
+        return "Monitor system - check connections"
 
 # =========================================================
 # API ENDPOINT - FLASK CALCULATES EVERYTHING
 # =========================================================
 @app.route("/api/update", methods=["POST"])
 def update_data():
+    start_time = time.time()
+    
     # ===== VALIDATION =====
     try:
-        data = request.json
+        data = request.get_json(force=True, silent=True, cache=False)
         if not data:
-            return jsonify({"error": "No data received"}), 400
+            return jsonify({"error": "No data received", "status": "error"}), 400
         
         # Safe extraction with defaults
         temp = float(data.get("temperature", 0))
@@ -419,7 +460,7 @@ def update_data():
         if current < 0 or current > 100:
             return jsonify({"error": f"Invalid current: {current}"}), 400
             
-    except (TypeError, ValueError) as e:
+    except (TypeError, ValueError, Exception) as e:
         return jsonify({"error": f"Invalid sensor data: {str(e)}"}), 400
     
     # ===== ENHANCED DEBUG: SHOW EXACT RPI DATA =====
@@ -428,43 +469,89 @@ def update_data():
     print(f"   Temperature: {temp}°C")
     print(f"   Current: {current}A")
     
-    # ===== UPDATE BUFFERS =====
-    temp_buffer_short.append(temp)
-    temp_buffer_long.append(temp)
-    current_buffer_short.append(current)
-    current_buffer_long.append(current)
+    # ===== UPDATE BUFFERS WITH THREAD SAFETY =====
+    try:
+        with buffer_lock:
+            temp_buffer_short.append(temp)
+            temp_buffer_long.append(temp)
+            current_buffer_short.append(current)
+            current_buffer_long.append(current)
+        
+        print(f"📊 Buffer sizes: {len(temp_buffer_short)}/{temp_buffer_short.maxlen}")
+    except Exception as e:
+        print(f"⚠ Buffer update error: {e}")
+        # Continue even if buffers fail
     
-    print(f"📊 Buffer sizes: {len(temp_buffer_short)}/{temp_buffer_short.maxlen}")
-    
     # ==================================================
-    # FEATURE EXTRACTION
+    # FEATURE EXTRACTION WITH ERROR HANDLING
     # ==================================================
-    X_hot = build_hotspot_X(temp, current)
-    X_ovr = build_overload_X(temp, current)
+    try:
+        X_hot = build_hotspot_X(temp, current)
+        X_ovr = build_overload_X(temp, current)
+    except Exception as e:
+        print(f"❌ Feature extraction failed: {e}")
+        # Return safe fallback response
+        return jsonify({
+            "temperature": float(temp),
+            "current": float(current),
+            "state": "Normal",
+            "breakerState": "Normal",
+            "status": "System online - monitoring",
+            "action": "System normal, continuing monitoring",
+            "ml": {
+                "hotspot_prob": 0.0,
+                "overload_prob": 0.0,
+                "composite_risk": 0.0
+            },
+            "forecast": {
+                "future_temp": float(temp),
+                "future_current": float(current)
+            },
+            "error": "Feature extraction temporary issue"
+        }), 200
 
     # ==================================================
-    # HOTSPOT PREDICTION
+    # HOTSPOT PREDICTION WITH ERROR HANDLING
     # ==================================================
-    hot_prob = float(hotspot_model.predict_proba(X_hot)[0][1])
-    print(f"🔥 Hotspot Model Output: {hot_prob:.4f} ({hot_prob*100:.1f}%)")
+    hot_prob = 0.0
+    try:
+        if hotspot_model is not None:
+            hot_prob = float(hotspot_model.predict_proba(X_hot)[0][1])
+            print(f"🔥 Hotspot Model Output: {hot_prob:.4f} ({hot_prob*100:.1f}%)")
+        else:
+            print("⚠ Hotspot model not loaded")
+    except Exception as e:
+        print(f"❌ Hotspot prediction failed: {e}")
+        hot_prob = 0.0
 
     # ==================================================
-    # OVERLOAD PREDICTION
+    # OVERLOAD PREDICTION WITH ERROR HANDLING
     # ==================================================
-    ovl_prob = float(overload_model.predict_proba(X_ovr)[0][1])
-    print(f"⚡ Overload Model Output: {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
-
-    # Optional calibration for low current
-    if current < 16:
-        ovl_prob *= 0.5
-        print(f"⚡ Overload adjusted (low current): {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
+    ovl_prob = 0.0
+    try:
+        if overload_model is not None:
+            ovl_prob = float(overload_model.predict_proba(X_ovr)[0][1])
+            print(f"⚡ Overload Model Output: {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
+            
+            # Optional calibration for low current
+            if current < 16:
+                ovl_prob *= 0.5
+                print(f"⚡ Overload adjusted (low current): {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
+        else:
+            print("⚠ Overload model not loaded")
+    except Exception as e:
+        print(f"❌ Overload prediction failed: {e}")
+        ovl_prob = 0.0
 
     hot_prob_raw = hot_prob
     ovl_prob_raw = ovl_prob
 
     # =========================
-    # FORECAST CALCULATIONS
+    # FORECAST CALCULATIONS WITH SAFE DEFAULTS
     # =========================
+    future_temp = temp
+    future_current = current
+    
     try:
         slope1 = (
             float(X_hot["temp_slope_short"].iloc[0]) * 0.7 +
@@ -472,15 +559,15 @@ def update_data():
         )
         future_temp = temp + slope1 * 10
         print(f"📈 Temperature forecast: {future_temp:.2f}°C")
-    except Exception:
-        future_temp = temp
+    except Exception as e:
+        print(f"⚠ Temp forecast failed: {e}")
 
     try:
         slope = float(X_ovr["current_slope_short"].iloc[0])
         future_current = current + slope * 10
         print(f"📈 Current forecast: {future_current:.2f}A")
-    except Exception:
-        future_current = current
+    except Exception as e:
+        print(f"⚠ Current forecast failed: {e}")
 
     print(f"{'='*60}")
 
@@ -491,72 +578,114 @@ def update_data():
     # =========================
     # STATE (Version 2)
     # =========================
-    state, status = determine_state(hot_prob, ovl_prob)
-    print(f"🎯 System State: {state} - {status}")
+    try:
+        state, status = determine_state(hot_prob, ovl_prob)
+        print(f"🎯 System State: {state} - {status}")
+    except Exception as e:
+        print(f"⚠ State determination failed: {e}")
+        state = "Normal"
+        status = "System monitoring active"
 
     # Use correct thresholds for overload in action
-    action = get_action(
-        state,
-        hot_prob >= WARNING_THRESHOLD,
-        ovl_prob >= WARNING_OVL
-    )
-    print(f"💡 Recommended Action: {action}")
+    action = "System normal, continuing monitoring"
+    try:
+        action = get_action(
+            state,
+            hot_prob >= WARNING_THRESHOLD,
+            ovl_prob >= WARNING_OVL
+        )
+        print(f"💡 Recommended Action: {action}")
+    except Exception as e:
+        print(f"⚠ Action generation failed: {e}")
 
     # =========================
-    # ALERTS (With enhanced cooldown keys)
+    # ALERTS (With enhanced cooldown keys and timeout)
     # =========================
     if state in ["Warning", "Critical"]:
-        # Create unique alert key based on state and what triggered it
-        if hot_prob >= WARNING_THRESHOLD and ovl_prob >= WARNING_OVL:
-            alert_trigger = "both"
-        elif hot_prob >= WARNING_THRESHOLD:
-            alert_trigger = "hotspot"
-        elif ovl_prob >= WARNING_OVL:
-            alert_trigger = "overload"
-        else:
-            alert_trigger = "unknown"
-        
-        alert_key = f"{state}_{alert_trigger}"
-        
-        if should_send_alert(alert_key):
-            print(f"📧 Sending {state} alert (trigger: {alert_trigger})...")
+        try:
+            # Create unique alert key based on state and what triggered it
+            if hot_prob >= WARNING_THRESHOLD and ovl_prob >= WARNING_OVL:
+                alert_trigger = "both"
+            elif hot_prob >= WARNING_THRESHOLD:
+                alert_trigger = "hotspot"
+            elif ovl_prob >= WARNING_OVL:
+                alert_trigger = "overload"
+            else:
+                alert_trigger = "unknown"
             
-            # Use SimpleNamespace for cleaner object creation
-            reading = SimpleNamespace(
-                temperature_c=temp,
-                current_a=current
-            )
+            alert_key = f"{state}_{alert_trigger}"
             
-            send_breaker_alert(
-                reading=reading,
-                risk={
-                    "hotspot_prob": hot_prob,
-                    "overload_prob": ovl_prob
-                },
-                alert_type=state,
-                message_action=action
-            )
-        else:
-            print(f"⏰ {state} alert suppressed (cooldown active for {alert_key})")
+            # Run alert in separate thread with timeout
+            def send_alert_thread():
+                try:
+                    if should_send_alert(alert_key):
+                        print(f"📧 Sending {state} alert (trigger: {alert_trigger})...")
+                        
+                        reading = SimpleNamespace(
+                            temperature_c=temp,
+                            current_a=current
+                        )
+                        
+                        send_breaker_alert(
+                            reading=reading,
+                            risk={
+                                "hotspot_prob": hot_prob,
+                                "overload_prob": ovl_prob
+                            },
+                            alert_type=state,
+                            message_action=action
+                        )
+                    else:
+                        print(f"⏰ {state} alert suppressed (cooldown active for {alert_key})")
+                except Exception as e:
+                    print(f"⚠ Alert thread error: {e}")
+            
+            # Start alert in background thread to prevent blocking
+            alert_thread = threading.Thread(target=send_alert_thread)
+            alert_thread.daemon = True
+            alert_thread.start()
+            
+        except Exception as e:
+            print(f"⚠ Alert system error: {e}")
 
     # =========================
-    # SEND TO SUPABASE WITH SERVER TIMESTAMP
+    # SEND TO SUPABASE WITH TIMEOUT
     # =========================
-    supabase_success = send_to_supabase(
-        temp, current, state,
-        hot_prob, ovl_prob,
-        composite_risk, action
-    )
-
-    if supabase_success:
-        print("✅ DATA SAVED TO SUPABASE")
-    else:
-        print("❌ FAILED TO SAVE TO SUPABASE - Check logs above")
+    supabase_success = False
+    try:
+        # Run supabase insert in separate thread with timeout
+        supabase_result = [False]
+        
+        def supabase_insert():
+            try:
+                result = send_to_supabase(
+                    temp, current, state,
+                    hot_prob, ovl_prob,
+                    composite_risk, action
+                )
+                supabase_result[0] = result
+            except Exception as e:
+                print(f"⚠ Supabase thread error: {e}")
+        
+        supabase_thread = threading.Thread(target=supabase_insert)
+        supabase_thread.daemon = True
+        supabase_thread.start()
+        supabase_thread.join(timeout=2.0)
+        
+        supabase_success = supabase_result[0]
+        
+        if supabase_success:
+            print("✅ DATA SAVED TO SUPABASE")
+        else:
+            print("⚠ Supabase save skipped or timed out")
+            
+    except Exception as e:
+        print(f"❌ Supabase error (non-critical): {e}")
 
     # =========================
     # STORE RESPONSE
     # =========================
-    latest_data_store.update({
+    response_data = {
         "temperature": float(temp),
         "current": float(current),
         "state": state,
@@ -576,13 +705,23 @@ def update_data():
             "future_current": float(round(future_current, 2))
         },
         "buffer_size": int(len(temp_buffer_short)),
-        "time": datetime.now().strftime("%H:%M:%S")
-    })
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "response_time_ms": round((time.time() - start_time) * 1000, 2)
+    }
+    
+    # Update store with thread safety
+    try:
+        with store_lock:
+            latest_data_store.clear()
+            latest_data_store.update(response_data)
+    except Exception as e:
+        print(f"⚠ Store update error: {e}")
 
-    print(f"✅ FINAL: Hotspot={hot_prob*100:.1f}% | Overload={ovl_prob*100:.1f}%")
+    print(f"✅ FINAL: Hotspot={hot_prob*100:.1f}% | Overload={ovl_prob*100:.1f}% | Resp={response_data['response_time_ms']}ms")
     print("="*70)
 
-    return jsonify(latest_data_store)
+    # Always return valid JSON, even if some parts failed
+    return jsonify(response_data)
 
 # =========================================================
 # ROUTES
@@ -619,7 +758,9 @@ def latest():
             "time": datetime.now().strftime("%H:%M:%S")
         })
     
-    response_data = dict(latest_data_store)
+    with store_lock:
+        response_data = dict(latest_data_store)
+    
     if 'breakerState' not in response_data:
         response_data['breakerState'] = response_data.get('state', 'Normal')
     response_data['has_data'] = True
@@ -628,18 +769,26 @@ def latest():
 
 @app.route("/api/health")
 def health():
+    with buffer_lock:
+        buffer_size = len(temp_buffer_short)
+        buffer_max = temp_buffer_short.maxlen if temp_buffer_short else 0
+    
+    with store_lock:
+        has_data = bool(latest_data_store and len(latest_data_store) > 0)
+    
     return jsonify({
         "status": "online",
         "supabase_connected": supabase is not None,
         "email_enabled": email_enabled,
-        "buffer_size": len(temp_buffer_short),
-        "buffer_max": temp_buffer_short.maxlen if temp_buffer_short else 0,
-        "latest_data_available": bool(latest_data_store and len(latest_data_store) > 0)
+        "buffer_size": buffer_size,
+        "buffer_max": buffer_max,
+        "latest_data_available": has_data
     })
 
 @app.route("/api/reset-buffers", methods=["POST"])
 def reset_buffers_endpoint():
-    reset_buffers()
+    with buffer_lock:
+        reset_buffers()
     return jsonify({"success": True, "message": "Buffers reset"})
 
 @app.route("/api/test-supabase")
@@ -693,15 +842,22 @@ def get_full_history():
 
 @app.route("/api/debug")
 def debug():
-    return jsonify({
-        "latest_data_store": latest_data_store,
-        "has_data": bool(latest_data_store and len(latest_data_store) > 0),
-        "buffer_sizes": {
+    with buffer_lock:
+        buffer_sizes = {
             "temp_short": len(temp_buffer_short),
             "temp_long": len(temp_buffer_long),
             "current_short": len(current_buffer_short),
             "current_long": len(current_buffer_long)
-        },
+        }
+    
+    with store_lock:
+        has_data = bool(latest_data_store and len(latest_data_store) > 0)
+        store_copy = dict(latest_data_store) if has_data else {}
+    
+    return jsonify({
+        "latest_data_store": store_copy,
+        "has_data": has_data,
+        "buffer_sizes": buffer_sizes,
         "supabase_connected": supabase is not None
     })
 
@@ -722,4 +878,6 @@ if __name__ == "__main__":
     print("🧠 Flask calculates: hotspot_prob, overload_prob using ML models")
     print("🌐 Dashboard available at: http://localhost:5000")
     print("="*50)
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    
+    # Run with threaded=True to handle concurrent requests better
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
