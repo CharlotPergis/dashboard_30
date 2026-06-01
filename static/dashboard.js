@@ -158,7 +158,11 @@ function renderHistoryTable() {
         else if (entry.breakerState === "Overload") { statusText = "🔴 Overload"; statusClass = "status-overload"; }
         else { statusText = "🔥 Critical"; statusClass = "status-danger"; }
         return `<tr>
-                    <td>${entry.time}</td>
+                    <td>
+                      ${new Date(entry.timestamp).toLocaleString('en-PH', {
+                        timeZone: 'Asia/Manila'
+                      })}
+                    </td>
                     <td>${entry.temperature.toFixed(1)}°C</td>^<td>${entry.current.toFixed(1)}A</td>
                     <td>${(entry.hotspotProb * 100).toFixed(0)}%</td>
                     <td>${(entry.overloadProb * 100).toFixed(0)}%</td>
@@ -182,7 +186,7 @@ function addToHistory(data) {
     });
     
     historyData.unshift({ 
-        time: phTime,  // ← NOW USING PHILIPPINES TIME
+        timestamp: Date.now(),  // ← NOW USING PHILIPPINES TIME
         temperature: data.temperature, 
         current: data.current, 
         breakerState: data.breakerState, 
