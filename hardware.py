@@ -354,5 +354,4 @@ if __name__ == "__main__":
             lcd.clear()
         except:
             pass
-        except:
-            pass
+
