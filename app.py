@@ -175,10 +175,10 @@ def log_fallback_alert(subject, body):
         print("⚠ Fallback logging failed:", e)
 
 # =========================================================
-# ENHANCED EMAIL ALERT SYSTEM (Without time-to-trip)
+# ENHANCED EMAIL ALERT SYSTEM (UPDATED - SYNCED WITH THRESHOLDS)
 # =========================================================
 def send_breaker_alert(reading, risk, alert_type, message_action):
-    """Enhanced email alert without time-to-trip information"""
+    """Enhanced email alert synced with app.py thresholds"""
     
     if not email_enabled or mail is None:
         print("⚠ Email skipped (disabled)")
@@ -190,20 +190,38 @@ def send_breaker_alert(reading, risk, alert_type, message_action):
         'mercymicadespabiladeras@gmail.com'
     ]
 
-    # Version 1 style subject lines with Version 2 formatting
+    hotspot_prob = risk['hotspot_prob']
+    overload_prob = risk['overload_prob']
+    
+    # Use the actual thresholds from app.py
+    is_critical_hotspot = hotspot_prob >= CRITICAL_THRESHOLD  # 0.70
+    is_critical_overload = overload_prob >= CRITICAL_OVL      # 0.90
+    is_warning_hotspot = hotspot_prob >= WARNING_THRESHOLD    # 0.65
+    is_warning_overload = overload_prob >= WARNING_OVL        # 0.75
+    
     if alert_type == "Critical":
-        if risk['hotspot_prob'] >= 0.85:
+        # Determine the specific critical condition based on thresholds
+        if is_critical_hotspot and is_critical_overload:
+            subject = "🔴🔴 CRITICAL: Severe Overheating AND Overload Detected!"
+            primary_issue = "CRITICAL: Both OVERHEATING and OVERLOAD detected!"
+        elif is_critical_hotspot:
             subject = "🔥 CRITICAL: Breaker Overheating Alert!"
+            primary_issue = "CRITICAL OVERHEATING DETECTED"
+        elif is_critical_overload:
+            subject = "⚠️ CRITICAL: Severe Electrical Overload!"
+            primary_issue = "CRITICAL OVERLOAD DETECTED"
         else:
-            subject = "🔴 CRITICAL: Severe Overload Detected!"
+            subject = "🔴 CRITICAL: Breaker System Emergency!"
+            primary_issue = "CRITICAL SYSTEM STATE"
+        
         body = f"""IMMEDIATE ACTION REQUIRED
 
-BREAKER {risk['hotspot_prob'] >= 0.85 and 'OVERHEATING' or 'OVERLOAD'} DETECTED!
+{primary_issue}
 
 Temperature: {reading.temperature_c:.1f}°C
 Current: {reading.current_a:.2f}A
-Hotspot Probability: {risk['hotspot_prob']*100:.1f}%
-Overload Probability: {risk['overload_prob']*100:.1f}%
+Hotspot Probability: {hotspot_prob*100:.1f}% {'(CRITICAL)' if is_critical_hotspot else '(WARNING)' if is_warning_hotspot else ''}
+Overload Probability: {overload_prob*100:.1f}% {'(CRITICAL)' if is_critical_overload else '(WARNING)' if is_warning_overload else ''}
 
 --- PROACTIVE ACTION RECOMMENDED ---
 {message_action}
@@ -211,15 +229,28 @@ Overload Probability: {risk['overload_prob']*100:.1f}%
 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
 
     elif alert_type == "Warning":
-        subject = "⚠️ PREVENTION: Potential Electrical Risk Detected!"
+        # Determine the specific warning condition
+        if is_warning_hotspot and is_warning_overload:
+            subject = "⚠️⚠️ WARNING: Multiple Issues Detected - Take Action"
+            primary_issue = "WARNING: Both Temperature and Load Issues Detected"
+        elif is_warning_hotspot:
+            subject = "⚠️ WARNING: Temperature Rising - Potential Hotspot"
+            primary_issue = "ELEVATED TEMPERATURE DETECTED"
+        elif is_warning_overload:
+            subject = "⚠️ WARNING: High Current Detected - Potential Overload"
+            primary_issue = "HIGH ELECTRICAL LOAD DETECTED"
+        else:
+            subject = "⚠️ WARNING: Breaker System Alert"
+            primary_issue = "SYSTEM WARNING"
+        
         body = f"""PREVENTIVE ACTION RECOMMENDED
 
-POTENTIAL ISSUE DEVELOPING!
+{primary_issue}
 
 Temperature: {reading.temperature_c:.1f}°C
 Current: {reading.current_a:.2f}A
-Hotspot Probability: {risk['hotspot_prob']*100:.1f}%
-Overload Probability: {risk['overload_prob']*100:.1f}%
+Hotspot Probability: {hotspot_prob*100:.1f}% {'(WARNING)' if is_warning_hotspot else ''}
+Overload Probability: {overload_prob*100:.1f}% {'(WARNING)' if is_warning_overload else ''}
 
 --- PROACTIVE ACTION RECOMMENDED ---
 {message_action}
@@ -236,8 +267,8 @@ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 Temperature: {reading.temperature_c:.1f}°C
 Current: {reading.current_a:.2f}A
 
-Hotspot Risk: {risk['hotspot_prob']*100:.1f}%
-Overload Risk: {risk['overload_prob']*100:.1f}%
+Hotspot Risk: {hotspot_prob*100:.1f}%
+Overload Risk: {overload_prob*100:.1f}%
 
 --- PROACTIVE ACTION RECOMMENDED ---
 {message_action}
@@ -251,11 +282,13 @@ Overload Risk: {risk['overload_prob']*100:.1f}%
         msg.body = body
         mail.send(msg)
 
-        print("✓ Email sent:", subject)
+        print(f"✓ Email sent: {subject}")
+        print(f"   - Hotspot: {hotspot_prob*100:.1f}% (Threshold: {CRITICAL_THRESHOLD*100:.0f}% for critical)")
+        print(f"   - Overload: {overload_prob*100:.1f}% (Threshold: {CRITICAL_OVL*100:.0f}% for critical)")
         return True, "Sent"
 
     except Exception as e:
-        print("✗ Email failed:", e)
+        print(f"✗ Email failed: {e}")
         log_fallback_alert(subject, body)
         return False, str(e)
 
