@@ -131,10 +131,10 @@ th {
 }
 tr { border-bottom: 1px solid #1e293b; }
 tr:hover { background: rgba(14, 165, 233, 0.1); }
-.state-normal { color: #22c55e; }
-.state-warning { color: #eab308; }
-.state-overload { color: #f97316; }
-.state-danger { color: #ef4444; }
+.state-normal { color: #22c55e; font-weight: 500; }
+.state-warning { color: #eab308; font-weight: 500; }
+.state-critical { color: #ef4444; font-weight: 600; }
+.state-warming { color: #f97316; font-weight: 500; }
 .toast {
   position: fixed;
   bottom: 20px;
@@ -209,15 +209,15 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
         <label>Status</label>
         <select id="statusFilter">
           <option value="all">All Statuses</option>
-          <option value="normal">✅ Normal</option>
-          <option value="warning">⚠️ Potential Overload</option>
-          <option value="overload">🔴 Overload</option>
-          <option value="danger">🔥 Overheating</option>
+          <option value="Normal">✅ Normal</option>
+          <option value="Warning">⚠️ Warning</option>
+          <option value="Critical">🔴 Critical</option>
+          <option value="WarmingUp">🔥 Warming Up</option>
         </select>
       </div>
       <div class="filter-group">
         <label>Search</label>
-        <input type="text" id="searchInput" placeholder="Search...">
+        <input type="text" id="searchInput" placeholder="Search by state, action...">
       </div>
       <div class="filter-actions">
         <button id="applyFiltersBtn" class="btn">🔍 Apply Filters</button>
@@ -250,12 +250,13 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
           <th>Hotspot Prob</th>
           <th>Overload Prob</th>
           <th>Breaker State</th>
-          <th>Status</th>
+          <th>System Status</th>
+          <th>Recommended Action</th>
         </tr>
       </thead>
       <tbody id="full-log-body">
         <tr>
-          <td colspan="7" class="loading-spinner">⏳ Loading data from Supabase...</td>
+          <td colspan="8" class="loading-spinner">⏳ Loading data from Supabase...</td>
         </tr>
       </tbody>
     </table>
@@ -302,54 +303,74 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
     return new Date(`${dateValue}T${timeStr}:00`); 
   }
 
+  // Get status display based on app.py thresholds
+  function getSystemStatus(breakerState, hotspotProb, overloadProb) {
+    if (breakerState === "WarmingUp") {
+      return "System initializing...";
+    } else if (breakerState === "Normal") {
+      return "System stable";
+    } else if (breakerState === "Warning") {
+      if (hotspotProb >= 0.65 && overloadProb >= 0.75) {
+        return "Elevated temperature & High load detected";
+      } else if (hotspotProb >= 0.65) {
+        return "Elevated temperature detected";
+      } else if (overloadProb >= 0.75) {
+        return "High load detected";
+      }
+      return "Warning - Monitor system";
+    } else if (breakerState === "Critical") {
+      if (hotspotProb >= 0.70 && overloadProb >= 0.90) {
+        return "Severe overheating & overload detected";
+      } else if (hotspotProb >= 0.70) {
+        return "Severe overheating detected";
+      } else if (overloadProb >= 0.90) {
+        return "Severe overload detected";
+      }
+      return "Critical - Immediate action required";
+    }
+    return "Unknown state";
+  }
+
+  // Get CSS class for breaker state
+  function getStateClass(breakerState) {
+    switch(breakerState) {
+      case "Critical": return "state-critical";
+      case "Warning": return "state-warning";
+      case "WarmingUp": return "state-warming";
+      default: return "state-normal";
+    }
+  }
+
+  // Get icon for breaker state
+  function getStateIcon(breakerState) {
+    switch(breakerState) {
+      case "Critical": return "🔴 ";
+      case "Warning": return "⚠️ ";
+      case "WarmingUp": return "🔥 ";
+      default: return "✅ ";
+    }
+  }
+
   // Convert API data to the format expected by the table
   function convertApiData(apiData) {
     if (!apiData || !Array.isArray(apiData)) return [];
     
     return apiData.map(item => {
-      // Map breaker_state to the display format
-      let breakerState = item.breaker_state || "Normal";
-      let displayState = breakerState;
-      let systemStatus = "";
-      let stateClass = "state-normal";
-      let stateIcon = "✅ ";
-      
-      if (breakerState === "Critical") {
-        // Determine if it's overheating or overload based on probabilities
-        if (item.hotspot_probability > 0.7) {
-          displayState = "Overheating";
-          systemStatus = `Critical: ${(item.hotspot_probability * 100).toFixed(1)}% hotspot probability`;
-          stateClass = "state-danger";
-          stateIcon = "🔥 ";
-        } else {
-          displayState = "Overload";
-          systemStatus = `Critical: ${(item.overload_probability * 100).toFixed(1)}% overload probability`;
-          stateClass = "state-overload";
-          stateIcon = "⚠️ ";
-        }
-      } else if (breakerState === "Warning") {
-        displayState = "Potential Overload";
-        systemStatus = `Warning: ${(item.overload_probability * 100).toFixed(1)}% load approaching threshold`;
-        stateClass = "state-warning";
-        stateIcon = "⚡ ";
-      } else {
-        systemStatus = "System operating normally";
-        stateClass = "state-normal";
-        stateIcon = "✅ ";
-      }
+      const breakerState = item.breaker_state || "Normal";
+      const hotspotProb = item.hotspot_probability || 0;
+      const overloadProb = item.overload_probability || 0;
       
       return {
         timestamp: item.created_at,
         temperature: item.temperature_c,
         current: item.current_a,
-        hotspot_prob: item.hotspot_probability,
-        overload_prob: item.overload_probability,
+        hotspot_prob: hotspotProb,
+        overload_prob: overloadProb,
         breakerState: breakerState,
-        displayState: displayState,
-        systemStatus: systemStatus,
-        stateClass: stateClass,
-        stateIcon: stateIcon,
-        action: item.recommended_action
+        systemStatus: getSystemStatus(breakerState, hotspotProb, overloadProb),
+        stateClass: getStateClass(breakerState),
+        stateIcon: getStateIcon(breakerState),
+        action: item.recommended_action || "Monitor system"
       };
     });
   }
@@ -357,7 +378,7 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
   // Fetch data from your backend API
   async function loadData() {
     try {
-      fullLogBody.innerHTML = '<tr><td colspan="7" class="loading-spinner">⏳ Loading data from Supabase...</td></tr>';
+      fullLogBody.innerHTML = '<tr><td colspan="8" class="loading-spinner">⏳ Loading data from Supabase...</td></tr>';
       
       const response = await fetch('/api/history');
       const result = await response.json();
@@ -378,11 +399,11 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
       updateStats();
       
       if (allLogs.length === 0) {
-        fullLogBody.innerHTML = '<tr><td colspan="7" class="loading-spinner">📭 No data found in database. Send some sensor data first.</td></tr>';
+        fullLogBody.innerHTML = '<tr><td colspan="8" class="loading-spinner">📭 No data found in database. Send some sensor data first.</td></tr>';
       }
     } catch (error) {
       console.error("❌ Error loading data from API:", error);
-      fullLogBody.innerHTML = '<tr><td colspan="7" class="loading-spinner" style="color:#ef4444;">❌ Error connecting to server. Make sure the Flask backend is running.</td></tr>';
+      fullLogBody.innerHTML = '<tr><td colspan="8" class="loading-spinner" style="color:#ef4444;">❌ Error connecting to server. Make sure the Flask backend is running.</td></tr>';
       allLogs = [];
       currentFilteredLogs = [];
     }
@@ -411,26 +432,21 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
       }
     }
     
-    // Status filter
+    // Status filter - matches app.py states exactly
     const status = statusFilter?.value || "all";
     if (status !== "all") {
-      filtered = filtered.filter(log => {
-        if (status === "normal") return log.breakerState === "Normal";
-        if (status === "warning") return log.displayState === "Potential Overload";
-        if (status === "overload") return log.displayState === "Overload";
-        if (status === "danger") return log.displayState === "Overheating";
-        return true;
-      });
+      filtered = filtered.filter(log => log.breakerState === status);
     }
     
     // Search filter
     const searchTerm = searchInput?.value.toLowerCase().trim() || "";
     if (searchTerm) {
       filtered = filtered.filter(log => 
-        (log.displayState || "").toLowerCase().includes(searchTerm) ||
-        (log.systemStatus || "").toLowerCase().includes(searchTerm) ||
-        (log.temperature || 0).toString().includes(searchTerm) ||
-        (log.current || 0).toString().includes(searchTerm)
+        log.breakerState.toLowerCase().includes(searchTerm) ||
+        log.systemStatus.toLowerCase().includes(searchTerm) ||
+        log.action.toLowerCase().includes(searchTerm) ||
+        log.temperature.toString().includes(searchTerm) ||
+        log.current.toString().includes(searchTerm)
       );
     }
     
@@ -450,7 +466,7 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
     
     if (currentFilteredLogs.length === 0) {
       const emptyRow = document.createElement("tr");
-      emptyRow.innerHTML = '<td colspan="7" style="text-align:center; padding:48px;">📭 No logs found matching your filters.</td>';
+      emptyRow.innerHTML = '<td colspan="8" style="text-align:center; padding:48px;">📭 No logs found matching your filters.</td>';
       fullLogBody.appendChild(emptyRow);
       return;
     }
@@ -463,8 +479,9 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
         <td><strong>${log.current.toFixed(1)}A</strong></td>
         <td>${(log.hotspot_prob * 100).toFixed(1)}%</td>
         <td>${(log.overload_prob * 100).toFixed(1)}%</td>
-        <td class="${log.stateClass}">${log.stateIcon}${log.displayState}</td>
-        <td style="max-width: 200px;">${log.systemStatus || '—'}</td>
+        <td class="${log.stateClass}">${log.stateIcon}${log.breakerState}</td>
+        <td style="max-width: 250px; font-size: 12px;">${log.systemStatus}</td>
+        <td style="max-width: 250px; font-size: 12px;">${log.action}</td>
       `;
       fullLogBody.appendChild(row);
     });
@@ -500,7 +517,7 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
     }
     
     try {
-      const headers = ["Date Time", "Temperature (°C)", "Current (A)", "Hotspot Prob (%)", "Overload Prob (%)", "Breaker State", "Status"];
+      const headers = ["Date Time", "Temperature (°C)", "Current (A)", "Hotspot Prob (%)", "Overload Prob (%)", "Breaker State", "System Status", "Recommended Action"];
       const csvRows = [headers];
       
       currentFilteredLogs.forEach(log => {
@@ -510,12 +527,13 @@ tr:hover { background: rgba(14, 165, 233, 0.1); }
           log.current.toFixed(1),
           (log.hotspot_prob * 100).toFixed(1),
           (log.overload_prob * 100).toFixed(1),
-          log.displayState,
-          log.systemStatus || "N/A"
+          log.breakerState,
+          `"${log.systemStatus.replace(/"/g, '""')}"`,
+          `"${log.action.replace(/"/g, '""')}"`
         ]);
       });
       
-      const csvContent = csvRows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+      const csvContent = csvRows.map(row => row.join(",")).join("\n");
       const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
