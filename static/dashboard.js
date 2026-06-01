@@ -17,41 +17,6 @@ function getPhilippinesTime() {
     });
 }
 
-// Clear old UTC timestamps from localStorage
-function clearOldUTCHistory() {
-    try {
-        let fullHistory = JSON.parse(localStorage.getItem("breakerFullHistory") || "[]");
-        let needsClear = false;
-        
-        // Check if any entry has UTC time pattern (starts with 12-13)
-        for (let i = 0; i < fullHistory.length; i++) {
-            if (fullHistory[i].timeDisplay && fullHistory[i].timeDisplay.startsWith("12:")) {
-                needsClear = true;
-                break;
-            }
-        }
-        
-        // Also clear if historyData has old times
-        if (historyData.length > 0) {
-            for (let i = 0; i < historyData.length; i++) {
-                if (historyData[i].time && historyData[i].time.startsWith("12:")) {
-                    needsClear = true;
-                    break;
-                }
-            }
-        }
-        
-        if (needsClear) {
-            console.log("Clearing old UTC timestamps from localStorage...");
-            localStorage.removeItem("breakerFullHistory");
-            historyData = [];  // Clear current history too
-            renderHistoryTable();
-        }
-    } catch (err) {
-        console.error("Error clearing old history:", err);
-    }
-}
-
 function initCombinedChart() {
     const canvas = document.getElementById("combinedChart");
     if (!canvas) return;
@@ -167,7 +132,7 @@ function renderHistoryTable() {
 }
 
 function addToHistory(data) {
-    // ✅ FIXED: Use Philippines time (UTC+8)
+    // ✅ FIXED: Use Philippines time instead of UTC
     const phTime = new Date().toLocaleString('en-PH', {
         timeZone: 'Asia/Manila',
         year: 'numeric',
@@ -268,7 +233,6 @@ function updateDashboard(data) {
 
 // Start fetching REAL data (NO simulation)
 window.addEventListener("load", () => {
-    clearOldUTCHistory();  // ← CLEAR OLD UTC TIMESTAMPS
     initCombinedChart();
     fetchRealData();  // Initial fetch
     fetchInterval = setInterval(fetchRealData, 2000);  // Fetch every 2 seconds
