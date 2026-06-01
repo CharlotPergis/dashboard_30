@@ -187,8 +187,7 @@ def set_outputs(state):
         GPIO.output(GREEN_LED, 0)
         GPIO.output(RED_LED, 1)
 
-    # fast beep using time
-        if int(time.time() * 5) % 2 == 0:
+        if int(time.time() * 10) % 2 == 0:
             GPIO.output(BUZZER, 1)
         else:
             GPIO.output(BUZZER, 0)
