@@ -191,7 +191,7 @@ def set_outputs(state):
         now = time.time()
 
     # 0.5s ON / 0.5s OFF pattern
-        if now - warning_last_toggle >= 0.5:
+        if now - warning_last_toggle >= 0.3:
             warning_buzzer_on = not warning_buzzer_on
             GPIO.output(BUZZER, 1 if warning_buzzer_on else 0)
             warning_last_toggle = now
