@@ -174,10 +174,9 @@ def safe_float(value):
 # GPIO CONTROL
 # =========================================================
 def set_outputs(state):
-    global warning_last_toggle, warning_buzzer_on
-    global critical_last_toggle, critical_buzzer_on
-
     now = time.time()
+
+    global warning_phase, warning_last_toggle
 
     if state == "Normal":
         GPIO.output(GREEN_LED, 1)
@@ -188,40 +187,38 @@ def set_outputs(state):
         GPIO.output(GREEN_LED, 0)
         GPIO.output(RED_LED, 1)
 
-        now = time.time()
-
-    # initialize timing state if needed
         if "warning_phase" not in globals():
             warning_phase = False
             warning_last_toggle = now
 
-    # beep pattern control
+        # beep ON for 0.2s, OFF for 1s
         if not warning_phase:
-        # TURN BEEP ON (short pulse)
             GPIO.output(BUZZER, 1)
             warning_phase = True
             warning_last_toggle = now
 
         else:
-        # wait 1 second before next beep
-            if now - warning_last_toggle >= 1.0:
+            if now - warning_last_toggle >= 0.2:
                 GPIO.output(BUZZER, 0)
+
+            if now - warning_last_toggle >= 1.0:
                 warning_phase = False
                 warning_last_toggle = now
 
     elif state == "Critical":
         GPIO.output(GREEN_LED, 0)
         GPIO.output(RED_LED, 1)
-
-        # LONG BEEP
         GPIO.output(BUZZER, 1)
 
     elif state == "WarmingUp":
         GPIO.output(RED_LED, 0)
-
-        blink = (time.time() % 0.3) < 0.15  # fast toggle
+        blink = (time.time() % 0.3) < 0.15
         GPIO.output(GREEN_LED, 1 if blink else 0)
+        GPIO.output(BUZZER, 0)
 
+    elif state == "NoSignal":
+        GPIO.output(GREEN_LED, 0)
+        GPIO.output(RED_LED, 0)
         GPIO.output(BUZZER, 0)
 
     else:
@@ -327,7 +324,7 @@ def run():
 
             except Exception as e:
                 print("API ERROR:", e)
-                state = "Warning"
+                state = "NoSignal"
 
             set_outputs(state)
 
