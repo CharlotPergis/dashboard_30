@@ -650,4 +650,5 @@ if __name__ == "__main__":
     print("🧠 Flask calculates: hotspot_prob, overload_prob using ML models")
     print("🌐 Dashboard available at: http://localhost:5000")
     print("="*50)
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
