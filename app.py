@@ -96,8 +96,19 @@ def build_overload_X(temp, current):
 # =========================================================
 # SUPABASE CONFIGURATION
 # =========================================================
-SUPABASE_URL = "https://qkniqwgcwvxkgjciccad.supabase.co"
-SUPABASE_KEY = "sb_publishable_pzHW1LlymSCVL876qchBKw_pPY0xN-2"
+SUPABASE_URL = os.getenv("https://qkniqwgcwvxkgjciccad.supabase.co")
+SUPABASE_KEY = os.getenv("sb_publishable_pzHW1LlymSCVL876qchBKw_pPY0xN-2")
+
+supabase = None
+
+try:
+    if SUPABASE_URL and SUPABASE_KEY:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✓ Supabase connected")
+    else:
+        print("⚠ Supabase env vars missing")
+except Exception as e:
+    print(f"❌ Supabase error: {e}")
 
 # Initialize Supabase client
 supabase = None

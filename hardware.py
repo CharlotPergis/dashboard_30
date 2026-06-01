@@ -17,7 +17,7 @@ from adafruit_ads1x15.analog_in import AnalogIn
 # CONFIG
 # =========================================================
 LCD_REFRESH_INTERVAL = 1.0
-FLASK_URL = "http://127.0.0.1:5000/api/update"
+FLASK_URL = "https://dashboard-30.onrender.com/api/update"
 TIMEOUT = 2
 
 time.sleep(2)
