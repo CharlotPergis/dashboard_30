@@ -12,7 +12,10 @@ import adafruit_mlx90614
 
 import adafruit_ads1x15.ads1115 as ADS
 from adafruit_ads1x15.analog_in import AnalogIn
+import threading
 
+buzzer_state = "Normal"
+buzzer_running = True
 # =========================================================
 # CONFIG
 # =========================================================
@@ -170,13 +173,30 @@ def safe_float(value):
     except:
         return 0.0
 
+
+def buzzer_loop():
+    global buzzer_state, buzzer_running
+
+    while buzzer_running:
+
+        if buzzer_state == "Warning":
+            GPIO.output(BUZZER, 1)
+            time.sleep(0.1)
+            GPIO.output(BUZZER, 0)
+            time.sleep(0.1)
+
+        elif buzzer_state == "Critical":
+            GPIO.output(BUZZER, 1)
+            time.sleep(0.2)
+
+        else:
+            GPIO.output(BUZZER, 0)
+            time.sleep(0.2)
 # =========================================================
 # GPIO CONTROL
 # =========================================================
 def set_outputs(state):
-    now = time.time()
-
-    global warning_phase, warning_last_toggle
+    global buzzer_state
 
     if state == "Normal":
         GPIO.output(GREEN_LED, 1)
@@ -186,35 +206,29 @@ def set_outputs(state):
     elif state == "Warning":
         GPIO.output(GREEN_LED, 0)
         GPIO.output(RED_LED, 1)
-
-        if int(time.time() * 10) % 2 == 0:
-            GPIO.output(BUZZER, 1)
-        else:
-            GPIO.output(BUZZER, 0)
-
+        buzzer_state = "Warning"
 
     elif state == "Critical":
         GPIO.output(GREEN_LED, 0)
         GPIO.output(RED_LED, 1)
-        GPIO.output(BUZZER, 1)
+        buzzer_state = "Critical"
 
     elif state == "WarmingUp":
         GPIO.output(RED_LED, 0)
         GPIO.output(BUZZER, 0)
-
-    # smooth blink timing
-        blink = int(time.time() * 2) % 2
-        GPIO.output(GREEN_LED, blink)
+        GPIO.output(GREEN_LED, int(time.time() * 2) % 2)
 
     elif state == "NoSignal":
         GPIO.output(GREEN_LED, 0)
         GPIO.output(RED_LED, 0)
         GPIO.output(BUZZER, 0)
+        buzzer_state = "Normal"
 
     else:
         GPIO.output(GREEN_LED, 0)
         GPIO.output(RED_LED, 1)
         GPIO.output(BUZZER, 0)
+        buzzer_state = "Normal"
 
 # =========================================================
 # LCD UPDATE
@@ -329,12 +343,16 @@ def run():
 # =========================================================
 if __name__ == "__main__":
     try:
+        threading.Thread(target=buzzer_loop, daemon=True).start()
         run()
     except KeyboardInterrupt:
         print("Stopping...")
     finally:
+        buzzer_running = False
         GPIO.cleanup()
         try:
             lcd.clear()
+        except:
+            pass
         except:
             pass
