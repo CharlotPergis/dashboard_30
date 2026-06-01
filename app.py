@@ -52,9 +52,20 @@ overload_model = None
 try:
     hotspot_model = joblib.load(HOTSPOT_PATH)
     overload_model = joblib.load(OVERLOAD_PATH)
+
+    # Get expected feature names from models
+    HOTSPOT_FEATURES = hotspot_model.feature_names_in_.tolist()
+    OVERLOAD_FEATURES = overload_model.feature_names_in_.tolist()
+
     print("✓ ML models loaded successfully (Google Drive)")
+    print("HOTSPOT FEATURES:", HOTSPOT_FEATURES)
+    print("OVERLOAD FEATURES:", OVERLOAD_FEATURES)
+
 except Exception as e:
     print(f"❌ Model loading failed: {e}")
+
+    HOTSPOT_FEATURES = []
+    OVERLOAD_FEATURES = []
 
 # =========================================================
 # FLASK INIT (ONLY ONCE)
