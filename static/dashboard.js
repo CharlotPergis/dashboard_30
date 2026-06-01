@@ -6,6 +6,45 @@ let historyData = [];
 let combinedCtx;
 let fetchInterval = null;
 
+// ✅ ADD THIS FUNCTION - Clears old UTC timestamps from localStorage
+function clearOldUTCHistory() {
+    try {
+        let fullHistory = JSON.parse(localStorage.getItem("breakerFullHistory") || "[]");
+        let needsClear = false;
+        
+        // Check if any stored data has old UTC time (starts with 12:)
+        for (let i = 0; i < fullHistory.length; i++) {
+            if (fullHistory[i].timeDisplay && fullHistory[i].timeDisplay.startsWith("12:")) {
+                needsClear = true;
+                break;
+            }
+            if (fullHistory[i].time && fullHistory[i].time.startsWith("12:")) {
+                needsClear = true;
+                break;
+            }
+        }
+        
+        // Also check current historyData
+        if (historyData.length > 0) {
+            for (let i = 0; i < historyData.length; i++) {
+                if (historyData[i].time && historyData[i].time.startsWith("12:")) {
+                    needsClear = true;
+                    break;
+                }
+            }
+        }
+        
+        if (needsClear) {
+            console.log("Clearing old UTC timestamps from localStorage...");
+            localStorage.removeItem("breakerFullHistory");
+            historyData = [];  // Clear current history
+            renderHistoryTable();  // Refresh the table
+        }
+    } catch (err) {
+        console.error("Error clearing old history:", err);
+    }
+}
+
 // Helper function to get Philippines time (UTC+8)
 function getPhilippinesTime() {
     return new Date().toLocaleString('en-PH', {
@@ -109,7 +148,7 @@ function renderHistoryTable() {
     const logBody = document.getElementById("log-body");
     if (!logBody) return;
     if (historyData.length === 0) { 
-        logBody.innerHTML = `<tr><td colspan="7" class="empty-state">Waiting for RPi data...</td></tr>`; 
+        logBody.innerHTML = `<tr><td colspan="7" class="empty-state">Waiting for RPi data......</td><td colspan="7" class="empty-state">waiting for RPi data...</td></td>`; 
         return; 
     }
     
@@ -121,8 +160,7 @@ function renderHistoryTable() {
         else { statusText = "🔥 Critical"; statusClass = "status-danger"; }
         return `<tr>
                     <td>${entry.time}</td>
-                    <td>${entry.temperature.toFixed(1)}°C</td>
-                    <td>${entry.current.toFixed(1)}A</td>
+                    <td>${entry.temperature.toFixed(1)}°C</td>^<td>${entry.current.toFixed(1)}A</td>
                     <td>${(entry.hotspotProb * 100).toFixed(0)}%</td>
                     <td>${(entry.overloadProb * 100).toFixed(0)}%</td>
                     <td>${entry.breakerState}</td>
@@ -233,6 +271,7 @@ function updateDashboard(data) {
 
 // Start fetching REAL data (NO simulation)
 window.addEventListener("load", () => {
+    clearOldUTCHistory();  // ✅ ADD THIS LINE - Clears old UTC data
     initCombinedChart();
     fetchRealData();  // Initial fetch
     fetchInterval = setInterval(fetchRealData, 2000);  // Fetch every 2 seconds
