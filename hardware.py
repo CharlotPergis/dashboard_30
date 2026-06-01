@@ -190,11 +190,24 @@ def set_outputs(state):
 
         now = time.time()
 
-    # 0.5s ON / 0.5s OFF pattern
-        if now - warning_last_toggle >= 0.3:
-            warning_buzzer_on = not warning_buzzer_on
-            GPIO.output(BUZZER, 1 if warning_buzzer_on else 0)
+    # initialize timing state if needed
+        if "warning_phase" not in globals():
+            warning_phase = False
             warning_last_toggle = now
+
+    # beep pattern control
+        if not warning_phase:
+        # TURN BEEP ON (short pulse)
+            GPIO.output(BUZZER, 1)
+            warning_phase = True
+            warning_last_toggle = now
+
+        else:
+        # wait 1 second before next beep
+            if now - warning_last_toggle >= 1.0:
+                GPIO.output(BUZZER, 0)
+                warning_phase = False
+                warning_last_toggle = now
 
     elif state == "Critical":
         GPIO.output(GREEN_LED, 0)
