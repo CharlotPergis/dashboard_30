@@ -187,23 +187,12 @@ def set_outputs(state):
         GPIO.output(GREEN_LED, 0)
         GPIO.output(RED_LED, 1)
 
-        if "warning_phase" not in globals():
-            warning_phase = False
-            warning_last_toggle = now
-
-        # beep ON for 0.2s, OFF for 1s
-        if not warning_phase:
+    # fast beep using time
+        if int(time.time() * 5) % 2 == 0:
             GPIO.output(BUZZER, 1)
-            warning_phase = True
-            warning_last_toggle = now
-
         else:
-            if now - warning_last_toggle >= 0.2:
-                GPIO.output(BUZZER, 0)
+            GPIO.output(BUZZER, 0)
 
-            if now - warning_last_toggle >= 1.0:
-                warning_phase = False
-                warning_last_toggle = now
 
     elif state == "Critical":
         GPIO.output(GREEN_LED, 0)
@@ -212,9 +201,11 @@ def set_outputs(state):
 
     elif state == "WarmingUp":
         GPIO.output(RED_LED, 0)
-        blink = (time.time() % 0.3) < 0.15
-        GPIO.output(GREEN_LED, 1 if blink else 0)
         GPIO.output(BUZZER, 0)
+
+    # smooth blink timing
+        blink = int(time.time() * 2) % 2
+        GPIO.output(GREEN_LED, blink)
 
     elif state == "NoSignal":
         GPIO.output(GREEN_LED, 0)
