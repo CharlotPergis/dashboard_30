@@ -5,10 +5,11 @@ import gdown
 import time
 from flask_cors import CORS
 from flask_mail import Mail, Message
-from datetime import datetime
+from datetime import datetime, timezone
 from supabase import create_client
 from types import SimpleNamespace
 import threading
+import traceback
 
 from feature_engine import (
     build_basic_features,
@@ -96,28 +97,27 @@ def build_overload_X(temp, current):
 # =========================================================
 # SUPABASE CONFIGURATION
 # =========================================================
-SUPABASE_URL = os.getenv("https://qkniqwgcwvxkgjciccad.supabase.co")
-SUPABASE_KEY = os.getenv("sb_publishable_pzHW1LlymSCVL876qchBKw_pPY0xN-2")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 supabase = None
 
-try:
-    if SUPABASE_URL and SUPABASE_KEY:
+# Initialize Supabase client properly
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print("✓ Supabase connected")
-    else:
-        print("⚠ Supabase env vars missing")
-except Exception as e:
-    print(f"❌ Supabase error: {e}")
-
-# Initialize Supabase client
-supabase = None
-try:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    print("✓ Supabase client initialized successfully")
-except Exception as e:
-    print(f"✗ Supabase initialization error: {e}")
-    print("⚠ Running without Supabase - data will be saved locally only")
+        print("✓ Supabase client initialized successfully")
+        
+        # Test the connection immediately
+        test_response = supabase.table("breaker_readings").select("count", count="exact").limit(1).execute()
+        print("✓ Supabase connection verified")
+        
+    except Exception as e:
+        print(f"✗ Supabase initialization error: {e}")
+        print("⚠ Running without Supabase - data will be saved locally only")
+        supabase = None
+else:
+    print("⚠ Supabase credentials missing - running without Supabase")
 
 # =========================================================
 # EMAIL CONFIG (SAFE)
@@ -168,13 +168,16 @@ def should_send_alert(alert_key):
 # SUPABASE FUNCTIONS
 # =========================================================
 def send_to_supabase(temp, current, state, hot_prob, ovl_prob, composite_risk, action):
-    """Send REAL sensor data to Supabase"""
+    """Send sensor data to Supabase with accurate server timestamp"""
     
     if supabase is None:
         print("⚠ Supabase not available, skipping insert")
         return False
     
     try:
+        # Generate accurate UTC timestamp from server
+        accurate_timestamp = datetime.now(timezone.utc).isoformat()
+        
         # Prepare data matching your table structure
         data = {
             "temperature_c": round(float(temp), 2),
@@ -183,22 +186,29 @@ def send_to_supabase(temp, current, state, hot_prob, ovl_prob, composite_risk, a
             "hotspot_probability": round(float(hot_prob), 4),
             "overload_probability": round(float(ovl_prob), 4),
             "composite_risk": round(float(composite_risk), 4),
-            "recommended_action": action[:200] if action else "Monitor system"
+            "recommended_action": action[:200] if action else "Monitor system",
+            "created_at": accurate_timestamp  # ✅ Server-generated accurate timestamp
         }
+        
+        print(f"📤 Attempting Supabase insert...")
+        print(f"   Data: {data}")
         
         # Insert to Supabase
         response = supabase.table("breaker_readings").insert(data).execute()
         
         # Check if successful
         if response and hasattr(response, 'data'):
-            print(f"✓ Supabase | {temp:.1f}°C | {current:.1f}A | {state}")
+            print(f"✓ Supabase INSERT SUCCESS | {temp:.1f}°C | {current:.1f}A | {state}")
+            print(f"   Timestamp: {accurate_timestamp}")
+            print(f"   Response: {response.data}")
             return True
         else:
-            print(f"⚠ Supabase insert returned unexpected response")
+            print(f"⚠ Supabase insert returned unexpected response: {response}")
             return False
             
     except Exception as e:
-        print(f"✗ Supabase error: {e}")
+        print(f"✗ Supabase INSERT ERROR: {e}")
+        print(f"   Full traceback: {traceback.format_exc()}")
         return False
 
 # =========================================================
@@ -393,7 +403,6 @@ def get_action(state, hotspot, overload):
 # =========================================================
 @app.route("/api/update", methods=["POST"])
 def update_data():
-
     # ===== VALIDATION =====
     try:
         data = request.json
@@ -531,13 +540,18 @@ def update_data():
             print(f"⏰ {state} alert suppressed (cooldown active for {alert_key})")
 
     # =========================
-    # SEND TO SUPABASE
+    # SEND TO SUPABASE WITH SERVER TIMESTAMP
     # =========================
     supabase_success = send_to_supabase(
-        temp, current, state, 
-        hot_prob, ovl_prob, 
+        temp, current, state,
+        hot_prob, ovl_prob,
         composite_risk, action
     )
+
+    if supabase_success:
+        print("✅ DATA SAVED TO SUPABASE")
+    else:
+        print("❌ FAILED TO SAVE TO SUPABASE - Check logs above")
 
     # =========================
     # STORE RESPONSE
@@ -634,14 +648,30 @@ def test_supabase():
         return jsonify({"success": False, "error": "Supabase not initialized"})
     
     try:
+        # Test insert first
+        test_data = {
+            "temperature_c": 0,
+            "current_a": 0,
+            "breaker_state": "Test",
+            "hotspot_probability": 0,
+            "overload_probability": 0,
+            "composite_risk": 0,
+            "recommended_action": "Test connection",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        test_response = supabase.table("breaker_readings").insert(test_data).execute()
+        print(f"Test insert response: {test_response}")
+        
+        # Then select
         response = supabase.table("breaker_readings").select("*").limit(5).execute()
         return jsonify({
             "success": True,
-            "message": "Supabase connected",
+            "message": "Supabase connected and writeable",
             "record_count": len(response.data) if hasattr(response, 'data') else 0
         })
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+        return jsonify({"success": False, "error": str(e), "traceback": traceback.format_exc()})
 
 @app.route("/api/history")
 def get_full_history():
@@ -671,7 +701,8 @@ def debug():
             "temp_long": len(temp_buffer_long),
             "current_short": len(current_buffer_short),
             "current_long": len(current_buffer_long)
-        }
+        },
+        "supabase_connected": supabase is not None
     })
 
 # =========================================================
@@ -691,5 +722,4 @@ if __name__ == "__main__":
     print("🧠 Flask calculates: hotspot_prob, overload_prob using ML models")
     print("🌐 Dashboard available at: http://localhost:5000")
     print("="*50)
-if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
