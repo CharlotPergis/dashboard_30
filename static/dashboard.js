@@ -171,25 +171,18 @@ function updateDashboard(data) {
     document.getElementById("breaker-state").textContent = data.breakerState || data.state;
     document.getElementById("breaker-state").className = `breaker-state-text ${data.breakerState || data.state}`;
     
-    const suggestionMain = document.getElementById("suggestion-main");
-    const actionText = document.getElementById("action-text");
-    const riskBadge = document.getElementById("risk-badge-container");
-    if (data.breakerState === "Overheating" || data.state === "Critical") {
-        suggestionMain.innerHTML = "🔥 CRITICAL: IMMEDIATE SHUTDOWN REQUIRED!";
-        actionText.textContent = "EMERGENCY: Isolate circuit NOW!";
-        riskBadge.innerHTML = '<span class="risk-badge critical">⚠️ CRITICAL RISK</span>';
-    } else if (data.breakerState === "Overload" || data.state === "Critical") {
-        suggestionMain.innerHTML = "⚠️ OVERLOAD DETECTED - Reduce load immediately!";
-        actionText.textContent = "Reduce connected load by 30-40%";
-        riskBadge.innerHTML = '<span class="risk-badge high">🔴 HIGH RISK</span>';
-    } else if (data.breakerState === "Potential Overload" || data.state === "Warning") {
-        suggestionMain.innerHTML = "⚡ Potential overload developing - Take preventive action";
-        actionText.textContent = "Reduce load by 15-20%";
-        riskBadge.innerHTML = '<span class="risk-badge medium">🟡 MODERATE RISK</span>';
-    } else {
-        suggestionMain.innerHTML = "✅ System operating normally - No action required";
-        actionText.textContent = "Standby - Monitoring";
-        riskBadge.innerHTML = '<span class="risk-badge low">🟢 LOW RISK</span>';
+    // Update recommendation text (fixed for your HTML)
+    const recommendationText = document.getElementById("recommendation-text");
+    if (recommendationText) {
+        if (data.breakerState === "Overheating" || data.state === "Critical") {
+            recommendationText.innerHTML = "🔥 CRITICAL: IMMEDIATE SHUTDOWN REQUIRED! - EMERGENCY: Isolate circuit NOW!";
+        } else if (data.breakerState === "Overload" || data.state === "Critical") {
+            recommendationText.innerHTML = "⚠️ OVERLOAD DETECTED - Reduce load immediately! Reduce connected load by 30-40%";
+        } else if (data.breakerState === "Potential Overload" || data.state === "Warning") {
+            recommendationText.innerHTML = "⚡ Potential overload developing - Take preventive action. Reduce load by 15-20%";
+        } else {
+            recommendationText.innerHTML = "✅ System operating normally - No action required. Standby - Monitoring";
+        }
     }
     
     if (timeLabels.length > MAX_HISTORY) { 

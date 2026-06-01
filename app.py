@@ -6,6 +6,7 @@ from flask_cors import CORS
 from flask_mail import Mail, Message
 from datetime import datetime
 from supabase import create_client
+from types import SimpleNamespace
 import threading
 
 from feature_engine import (
@@ -81,12 +82,13 @@ CRITICAL_OVL = 0.90
 last_alert_time = {}
 ALERT_COOLDOWN_SECONDS = 300
 
-def should_send_alert(alert_type):
+def should_send_alert(alert_key):
+    """Check if alert should be sent based on cooldown period"""
     now = time.time()
-    if alert_type in last_alert_time:
-        if now - last_alert_time[alert_type] < ALERT_COOLDOWN_SECONDS:
+    if alert_key in last_alert_time:
+        if now - last_alert_time[alert_key] < ALERT_COOLDOWN_SECONDS:
             return False
-    last_alert_time[alert_type] = now
+    last_alert_time[alert_key] = now
     return True
 
 # =========================================================
@@ -286,9 +288,25 @@ def get_action(state, hotspot, overload):
 @app.route("/api/update", methods=["POST"])
 def update_data():
 
-    data = request.json
-    temp = float(data["temperature"])
-    current = float(data["current"])
+    # ===== BETTER VALIDATION - FIXED =====
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "No data received"}), 400
+        
+        # Safe extraction with defaults
+        temp = float(data.get("temperature", 0))
+        current = float(data.get("current", 0))
+        
+        # Validate ranges
+        if temp < -20 or temp > 150:
+            return jsonify({"error": f"Invalid temperature: {temp}"}), 400
+        if current < 0 or current > 100:
+            return jsonify({"error": f"Invalid current: {current}"}), 400
+            
+    except (TypeError, ValueError) as e:
+        return jsonify({"error": f"Invalid sensor data: {str(e)}"}), 400
+    # =====================================
     
     # ===== ENHANCED DEBUG: SHOW EXACT RPI DATA =====
     print(f"\n{'='*60}")
@@ -298,12 +316,16 @@ def update_data():
     
     # ============================================
     # USE PROBABILITIES COMING DIRECTLY FROM RPi
+    # WITH SAFE DEFAULT VALUES
     # ============================================
     
-    # Get probabilities from RPi payload
-    # Your RPi should send: {"temperature": xx, "current": xx, "hotspot_prob": xx, "overload_prob": xx}
-    hot_prob = float(data["hotspot_prob"])
-    ovl_prob = float(data["overload_prob"])
+    # Safe extraction with defaults to prevent KeyError
+    hot_prob = float(data.get("hotspot_prob", 0))
+    ovl_prob = float(data.get("overload_prob", 0))
+    
+    # Validate probability ranges
+    hot_prob = max(0.0, min(1.0, hot_prob))
+    ovl_prob = max(0.0, min(1.0, ovl_prob))
     
     # Store raw values for debugging
     hot_prob_raw = hot_prob
@@ -315,7 +337,6 @@ def update_data():
     # ==============================================
 
     # CRITICAL FIX: Manually update buffers before feature extraction
-    # This ensures historical data is available for slope calculations
     temp_buffer_short.append(temp)
     temp_buffer_long.append(temp)
     current_buffer_short.append(current)
@@ -328,7 +349,7 @@ def update_data():
         print(f"📊 Recent currents (last 5): {list(current_buffer_short)[-5:]}")
     
     # =========================
-    # SIMPLE FORECAST (No ML models needed)
+    # SIMPLE FORECAST
     # =========================
     future_temp = temp
     future_current = current
@@ -343,24 +364,41 @@ def update_data():
     state, status = determine_state(hot_prob, ovl_prob)
     print(f"🎯 System State: {state} - {status}")
 
+    # Use correct thresholds for overload in action
     action = get_action(
         state,
         hot_prob >= WARNING_THRESHOLD,
-        ovl_prob >= WARNING_THRESHOLD
+        ovl_prob >= WARNING_OVL
     )
     print(f"💡 Recommended Action: {action}")
 
     # =========================
-    # ALERTS (Without time-to-trip)
+    # ALERTS (With enhanced cooldown keys)
     # =========================
     if state in ["Warning", "Critical"]:
-        if should_send_alert(state):
-            print(f"📧 Sending {state} alert...")
+        # Create unique alert key based on state and what triggered it
+        if hot_prob >= WARNING_THRESHOLD and ovl_prob >= WARNING_OVL:
+            alert_trigger = "both"
+        elif hot_prob >= WARNING_THRESHOLD:
+            alert_trigger = "hotspot"
+        elif ovl_prob >= WARNING_OVL:
+            alert_trigger = "overload"
+        else:
+            alert_trigger = "unknown"
+        
+        alert_key = f"{state}_{alert_trigger}"
+        
+        if should_send_alert(alert_key):
+            print(f"📧 Sending {state} alert (trigger: {alert_trigger})...")
+            
+            # Use SimpleNamespace for cleaner object creation
+            reading = SimpleNamespace(
+                temperature_c=temp,
+                current_a=current
+            )
+            
             send_breaker_alert(
-                reading=type("obj", (), {
-                    "temperature_c": temp,
-                    "current_a": current
-                }),
+                reading=reading,
                 risk={
                     "hotspot_prob": hot_prob,
                     "overload_prob": ovl_prob
@@ -369,10 +407,10 @@ def update_data():
                 message_action=action
             )
         else:
-            print(f"⏰ {state} alert suppressed (cooldown active)")
+            print(f"⏰ {state} alert suppressed (cooldown active for {alert_key})")
 
     # =========================
-    # SEND TO SUPABASE (Version 1)
+    # SEND TO SUPABASE
     # =========================
     supabase_success = send_to_supabase(
         temp, current, state, 
@@ -381,7 +419,7 @@ def update_data():
     )
 
     # =========================
-    # STORE RESPONSE (Version 2 + Supabase status)
+    # STORE RESPONSE
     # =========================
     latest_data_store.update({
         "temperature": float(temp),
@@ -419,12 +457,8 @@ def update_data():
 def index():
     return render_template("index.html")
 
-# =========================================================
-# FULL HISTORY PAGE ROUTE
-# =========================================================
 @app.route("/full_history.html")
 def full_history_page():
-    """Render the full history page"""
     return render_template("full_history.html")
 
 @app.route("/history")
@@ -437,7 +471,6 @@ def logs_page():
 
 @app.route("/api/latest-data")
 def latest():
-    """Return latest data - shows waiting message if no RPi data"""
     if not latest_data_store or len(latest_data_store) == 0:
         return jsonify({
             "has_data": False,
@@ -530,7 +563,7 @@ if __name__ == "__main__":
     print(f"📧 Email: {'Enabled' if email_enabled else 'Disabled'}")
     print(f"📊 History API: Enabled at /api/history")
     print(f"📄 History Page: Enabled at /full_history.html")
-    print(f"⚡ Thresholds: Warning={WARNING_THRESHOLD}, Critical={CRITICAL_THRESHOLD}")
+    print(f"⚡ Thresholds: Warning={WARNING_THRESHOLD}, Critical={CRITICAL_THRESHOLD}, Warning_OVL={WARNING_OVL}, Critical_OVL={CRITICAL_OVL}")
     print(f"📊 Buffer size: {temp_buffer_short.maxlen if temp_buffer_short else 10}")
     print("===================================")
     print("\n⏳ Waiting for Raspberry Pi to connect...")
