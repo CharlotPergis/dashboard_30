@@ -124,8 +124,7 @@ function saveToLocalStorage() {
     try {
         let fullHistory = JSON.parse(localStorage.getItem("breakerFullHistory") || "[]");
         fullHistory.unshift({ 
-            timestamp: new Date().toISOString(), 
-            timeDisplay: timeLabels[timeLabels.length - 1], 
+            timestamp: Date.now(),  
             temperature: tempData[tempData.length - 1], 
             current: currentData[currentData.length - 1], 
             breakerState: getBreakerStateFromData(tempData[tempData.length - 1], currentData[currentData.length - 1]), 
