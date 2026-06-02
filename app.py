@@ -113,25 +113,35 @@ print("🔥 INITIALIZING SYSTEM...")
 def build_hotspot_X(temp, current):
     try:
         feat = build_basic_features(temp, current)
-        feat = feat.reindex(columns=HOTSPOT_FEATURES, fill_value=0)
+        # Handle case when HOTSPOT_FEATURES is empty
+        if HOTSPOT_FEATURES:
+            feat = feat.reindex(columns=HOTSPOT_FEATURES, fill_value=0)
         return feat
     except Exception as e:
         print(f"⚠ Hotspot feature build error: {e}")
         # Return empty feature set as fallback
         import pandas as pd
-        return pd.DataFrame([[0] * len(HOTSPOT_FEATURES)], columns=HOTSPOT_FEATURES)
+        if HOTSPOT_FEATURES:
+            return pd.DataFrame([[0] * len(HOTSPOT_FEATURES)], columns=HOTSPOT_FEATURES)
+        else:
+            return pd.DataFrame([[0] * 10])  # Default fallback
 
 
 def build_overload_X(temp, current):
     try:
         feat = build_basic_features(temp, current)
-        feat = feat.reindex(columns=OVERLOAD_FEATURES, fill_value=0)
+        # Handle case when OVERLOAD_FEATURES is empty
+        if OVERLOAD_FEATURES:
+            feat = feat.reindex(columns=OVERLOAD_FEATURES, fill_value=0)
         return feat
     except Exception as e:
         print(f"⚠ Overload feature build error: {e}")
         # Return empty feature set as fallback
         import pandas as pd
-        return pd.DataFrame([[0] * len(OVERLOAD_FEATURES)], columns=OVERLOAD_FEATURES)
+        if OVERLOAD_FEATURES:
+            return pd.DataFrame([[0] * len(OVERLOAD_FEATURES)], columns=OVERLOAD_FEATURES)
+        else:
+            return pd.DataFrame([[0] * 10])  # Default fallback
 
 # =========================================================
 # SUPABASE CONFIGURATION
@@ -167,9 +177,13 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 email_enabled = False
 
 if RESEND_API_KEY:
-    resend.api_key = RESEND_API_KEY
-    email_enabled = True
-    print("✓ Resend API initialized - Email alerts active")
+    try:
+        resend.api_key = RESEND_API_KEY
+        email_enabled = True
+        print("✓ Resend API initialized - Email alerts active")
+    except Exception as e:
+        print(f"✗ Resend initialization error: {e}")
+        email_enabled = False
 else:
     print("⚠ RESEND_API_KEY not found - email alerts disabled")
 
@@ -386,7 +400,11 @@ Overload Risk: {overload_prob*100:.1f}%
 def determine_state(hot_prob, ovl_prob):
     try:
         with buffer_lock:
-            if len(temp_buffer_short) < WARMUP_SAMPLES or len(temp_buffer_long) < WARMUP_SAMPLES:
+            # Safely check buffer lengths
+            temp_short_len = len(temp_buffer_short) if temp_buffer_short else 0
+            temp_long_len = len(temp_buffer_long) if temp_buffer_long else 0
+            
+            if temp_short_len < WARMUP_SAMPLES or temp_long_len < WARMUP_SAMPLES:
                 return "WarmingUp", "System initializing..."
 
         if hot_prob >= CRITICAL_THRESHOLD:
@@ -474,7 +492,9 @@ def update_data():
             current_buffer_short.append(current)
             current_buffer_long.append(current)
         
-        print(f"📊 Buffer sizes: {len(temp_buffer_short)}/{temp_buffer_short.maxlen}")
+        # Safe maxlen access
+        buffer_max = temp_buffer_short.maxlen if hasattr(temp_buffer_short, 'maxlen') else 10
+        print(f"📊 Buffer sizes: {len(temp_buffer_short)}/{buffer_max}")
     except Exception as e:
         print(f"⚠ Buffer update error: {e}")
         # Continue even if buffers fail
@@ -512,7 +532,7 @@ def update_data():
     # ==================================================
     hot_prob = 0.0
     try:
-        if hotspot_model is not None:
+        if hotspot_model is not None and X_hot is not None:
             hot_prob = float(hotspot_model.predict_proba(X_hot)[0][1])
             print(f"🔥 Hotspot Model Output: {hot_prob:.4f} ({hot_prob*100:.1f}%)")
         else:
@@ -526,7 +546,7 @@ def update_data():
     # ==================================================
     ovl_prob = 0.0
     try:
-        if overload_model is not None:
+        if overload_model is not None and X_ovr is not None:
             ovl_prob = float(overload_model.predict_proba(X_ovr)[0][1])
             print(f"⚡ Overload Model Output: {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
             
@@ -550,19 +570,21 @@ def update_data():
     future_current = current
     
     try:
-        slope1 = (
-            float(X_hot["temp_slope_short"].iloc[0]) * 0.7 +
-            float(X_hot["temp_slope_long"].iloc[0]) * 0.3
-        )
-        future_temp = temp + slope1 * 10
-        print(f"📈 Temperature forecast: {future_temp:.2f}°C")
+        if X_hot is not None and "temp_slope_short" in X_hot.columns and "temp_slope_long" in X_hot.columns:
+            slope1 = (
+                float(X_hot["temp_slope_short"].iloc[0]) * 0.7 +
+                float(X_hot["temp_slope_long"].iloc[0]) * 0.3
+            )
+            future_temp = temp + slope1 * 10
+            print(f"📈 Temperature forecast: {future_temp:.2f}°C")
     except Exception as e:
         print(f"⚠ Temp forecast failed: {e}")
 
     try:
-        slope = float(X_ovr["current_slope_short"].iloc[0])
-        future_current = current + slope * 10
-        print(f"📈 Current forecast: {future_current:.2f}A")
+        if X_ovr is not None and "current_slope_short" in X_ovr.columns:
+            slope = float(X_ovr["current_slope_short"].iloc[0])
+            future_current = current + slope * 10
+            print(f"📈 Current forecast: {future_current:.2f}A")
     except Exception as e:
         print(f"⚠ Current forecast failed: {e}")
 
@@ -701,7 +723,7 @@ def update_data():
             "future_temp": float(round(future_temp, 2)),
             "future_current": float(round(future_current, 2))
         },
-        "buffer_size": int(len(temp_buffer_short)),
+        "buffer_size": int(len(temp_buffer_short)) if temp_buffer_short else 0,
         "time": datetime.now().strftime("%H:%M:%S"),
         "response_time_ms": round((time.time() - start_time) * 1000, 2)
     }
@@ -725,19 +747,35 @@ def update_data():
 # =========================================================
 @app.route("/")
 def index():
-    return render_template("index.html")
+    try:
+        return render_template("index.html")
+    except Exception as e:
+        print(f"⚠ Template error: {e}")
+        return "System Online - Dashboard loading...", 200
 
 @app.route("/full_history.html")
 def full_history_page():
-    return render_template("full_history.html")
+    try:
+        return render_template("full_history.html")
+    except Exception as e:
+        print(f"⚠ Template error: {e}")
+        return "History page - Coming soon", 200
 
 @app.route("/history")
 def history_page():
-    return render_template("full_history.html")
+    try:
+        return render_template("full_history.html")
+    except Exception as e:
+        print(f"⚠ Template error: {e}")
+        return "History page - Coming soon", 200
 
 @app.route("/logs")
 def logs_page():
-    return render_template("full_history.html")
+    try:
+        return render_template("full_history.html")
+    except Exception as e:
+        print(f"⚠ Template error: {e}")
+        return "Logs page - Coming soon", 200
 
 @app.route("/api/latest-data")
 def latest():
@@ -767,8 +805,8 @@ def latest():
 @app.route("/api/health")
 def health():
     with buffer_lock:
-        buffer_size = len(temp_buffer_short)
-        buffer_max = temp_buffer_short.maxlen if temp_buffer_short else 0
+        buffer_size = len(temp_buffer_short) if temp_buffer_short else 0
+        buffer_max = temp_buffer_short.maxlen if (temp_buffer_short and hasattr(temp_buffer_short, 'maxlen')) else 10
     
     with store_lock:
         has_data = bool(latest_data_store and len(latest_data_store) > 0)
@@ -841,10 +879,10 @@ def get_full_history():
 def debug():
     with buffer_lock:
         buffer_sizes = {
-            "temp_short": len(temp_buffer_short),
-            "temp_long": len(temp_buffer_long),
-            "current_short": len(current_buffer_short),
-            "current_long": len(current_buffer_long)
+            "temp_short": len(temp_buffer_short) if temp_buffer_short else 0,
+            "temp_long": len(temp_buffer_long) if temp_buffer_long else 0,
+            "current_short": len(current_buffer_short) if current_buffer_short else 0,
+            "current_long": len(current_buffer_long) if current_buffer_long else 0
         }
     
     with store_lock:
@@ -868,7 +906,8 @@ if __name__ == "__main__":
     print(f"📊 History API: Enabled at /api/history")
     print(f"📄 History Page: Enabled at /full_history.html")
     print(f"⚡ Thresholds: Warning={WARNING_THRESHOLD}, Critical={CRITICAL_THRESHOLD}, Warning_OVL={WARNING_OVL}, Critical_OVL={CRITICAL_OVL}")
-    print(f"📊 Buffer size: {temp_buffer_short.maxlen if temp_buffer_short else 10}")
+    buffer_max = temp_buffer_short.maxlen if (temp_buffer_short and hasattr(temp_buffer_short, 'maxlen')) else 10
+    print(f"📊 Buffer size: {buffer_max}")
     print("===================================")
     print("\n⏳ Waiting for Raspberry Pi to connect...")
     print("📡 RPi sends: temperature, current (raw sensor data ONLY)")
