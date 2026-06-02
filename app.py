@@ -284,10 +284,9 @@ def send_breaker_alert(reading, risk, alert_type, message_action):
         print("⚠ Email skipped (Resend not configured)")
         return False, "Email disabled"
 
+    # CHANGED: Only send to your email for testing
     recipients = [
-        'gwenlykapergis@gmail.com',
-        'mariamonicaragunjanvillaflor@gmail.com',
-        'mercymicadespabiladeras@gmail.com'
+        'pergishazel@gmail.com',  # Only your email
     ]
 
     hotspot_prob = risk['hotspot_prob']
