@@ -194,7 +194,7 @@ WARMUP_SAMPLES = 10
 WARNING_THRESHOLD = 0.65
 CRITICAL_THRESHOLD = 0.70
 WARNING_OVL = 0.80
-CRITICAL_OVL = 0.100
+CRITICAL_OVL = 0.99
 
 # =========================================================
 # ALERT TRACKING (Enhanced with cooldown)
