@@ -4,14 +4,13 @@ import os
 import gdown
 import time
 from flask_cors import CORS
-from flask_mail import Mail, Message
+# from flask_mail import Mail, Message  # COMMENTED OUT - Using Resend instead
+import resend  # ADDED FOR RESEND EMAIL
 from datetime import datetime, timezone
 from supabase import create_client
 from types import SimpleNamespace
 import threading
 import traceback
-import signal
-import sys
 
 from feature_engine import (
     build_basic_features,
@@ -21,26 +20,6 @@ from feature_engine import (
     current_buffer_long,
     reset_buffers
 )
-
-# =========================================================
-# GLOBAL EXCEPTION HANDLER
-# =========================================================
-def global_exception_handler(exc_type, exc_value, exc_traceback):
-    """Handle unexpected exceptions gracefully"""
-    print(f"❗ UNHANDLED EXCEPTION: {exc_type.__name__}: {exc_value}")
-    traceback.print_tb(exc_traceback)
-    # Don't crash - just log and continue
-
-# Install global exception handler
-sys.excepthook = global_exception_handler
-
-# Handle SIGTERM gracefully
-def signal_handler(sig, frame):
-    print("\n🛑 Shutting down gracefully...")
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
 
 # =========================================================
 # BASE DIR
@@ -98,10 +77,6 @@ app = Flask(__name__,
             static_folder='static')
 CORS(app)
 
-# Thread lock for buffer operations
-buffer_lock = threading.Lock()
-store_lock = threading.Lock()
-
 latest_data_store = {}
 
 print("🔥 INITIALIZING SYSTEM...")
@@ -110,27 +85,15 @@ print("🔥 INITIALIZING SYSTEM...")
 # FEATURE BUILDERS
 # =========================================================
 def build_hotspot_X(temp, current):
-    try:
-        feat = build_basic_features(temp, current)
-        feat = feat.reindex(columns=HOTSPOT_FEATURES, fill_value=0)
-        return feat
-    except Exception as e:
-        print(f"⚠ Hotspot feature build error: {e}")
-        # Return empty feature set as fallback
-        import pandas as pd
-        return pd.DataFrame([[0] * len(HOTSPOT_FEATURES)], columns=HOTSPOT_FEATURES)
+    feat = build_basic_features(temp, current)
+    feat = feat.reindex(columns=HOTSPOT_FEATURES, fill_value=0)
+    return feat
 
 
 def build_overload_X(temp, current):
-    try:
-        feat = build_basic_features(temp, current)
-        feat = feat.reindex(columns=OVERLOAD_FEATURES, fill_value=0)
-        return feat
-    except Exception as e:
-        print(f"⚠ Overload feature build error: {e}")
-        # Return empty feature set as fallback
-        import pandas as pd
-        return pd.DataFrame([[0] * len(OVERLOAD_FEATURES)], columns=OVERLOAD_FEATURES)
+    feat = build_basic_features(temp, current)
+    feat = feat.reindex(columns=OVERLOAD_FEATURES, fill_value=0)
+    return feat
 
 # =========================================================
 # SUPABASE CONFIGURATION
@@ -158,25 +121,19 @@ else:
     print("⚠ Supabase credentials missing - running without Supabase")
 
 # =========================================================
-# EMAIL CONFIG (SAFE)
+# EMAIL CONFIG - RESEND API (Works on Render Free Tier)
 # =========================================================
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = 'breaker.monitor.system@gmail.com'
-app.config['MAIL_PASSWORD'] = 'kzng lhzr elww gyyu'
-app.config['MAIL_DEFAULT_SENDER'] = 'breaker.monitor.system@gmail.com'
+# Get API key from environment variable
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 
-mail = None
 email_enabled = False
 
-try:
-    mail = Mail(app)
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
     email_enabled = True
-    print("✓ Email service initialized")
-except Exception as e:
-    print(f"✗ Email initialization error: {e}")
-    print("⚠ Email alerts disabled — system continues normally")
+    print("✓ Resend API initialized - Email alerts active")
+else:
+    print("⚠ RESEND_API_KEY not found - email alerts disabled")
 
 # =========================================================
 # THRESHOLDS (Version 2 thresholds preserved)
@@ -192,17 +149,15 @@ CRITICAL_OVL = 0.90
 # =========================================================
 last_alert_time = {}
 ALERT_COOLDOWN_SECONDS = 300
-alert_lock = threading.Lock()
 
 def should_send_alert(alert_key):
     """Check if alert should be sent based on cooldown period"""
-    with alert_lock:
-        now = time.time()
-        if alert_key in last_alert_time:
-            if now - last_alert_time[alert_key] < ALERT_COOLDOWN_SECONDS:
-                return False
-        last_alert_time[alert_key] = now
-        return True
+    now = time.time()
+    if alert_key in last_alert_time:
+        if now - last_alert_time[alert_key] < ALERT_COOLDOWN_SECONDS:
+            return False
+    last_alert_time[alert_key] = now
+    return True
 
 # =========================================================
 # SUPABASE FUNCTIONS
@@ -227,7 +182,7 @@ def send_to_supabase(temp, current, state, hot_prob, ovl_prob, composite_risk, a
             "overload_probability": round(float(ovl_prob), 4),
             "composite_risk": round(float(composite_risk), 4),
             "recommended_action": action[:200] if action else "Monitor system",
-            "created_at": accurate_timestamp
+            "created_at": accurate_timestamp  # ✅ Server-generated accurate timestamp
         }
         
         print(f"📤 Attempting Supabase insert...")
@@ -266,13 +221,13 @@ def log_fallback_alert(subject, body):
         print("⚠ Fallback logging failed:", e)
 
 # =========================================================
-# ENHANCED EMAIL ALERT SYSTEM (UPDATED - SYNCED WITH THRESHOLDS)
+# ENHANCED EMAIL ALERT SYSTEM - RESEND API VERSION
 # =========================================================
 def send_breaker_alert(reading, risk, alert_type, message_action):
-    """Enhanced email alert synced with app.py thresholds"""
+    """Send email alert using Resend API"""
     
-    if not email_enabled or mail is None:
-        print("⚠ Email skipped (disabled)")
+    if not email_enabled:
+        print("⚠ Email skipped (Resend not configured)")
         return False, "Email disabled"
 
     recipients = [
@@ -285,10 +240,10 @@ def send_breaker_alert(reading, risk, alert_type, message_action):
     overload_prob = risk['overload_prob']
     
     # Use the actual thresholds from app.py
-    is_critical_hotspot = hotspot_prob >= CRITICAL_THRESHOLD
-    is_critical_overload = overload_prob >= CRITICAL_OVL
-    is_warning_hotspot = hotspot_prob >= WARNING_THRESHOLD
-    is_warning_overload = overload_prob >= WARNING_OVL
+    is_critical_hotspot = hotspot_prob >= CRITICAL_THRESHOLD  # 0.70
+    is_critical_overload = overload_prob >= CRITICAL_OVL      # 0.90
+    is_warning_hotspot = hotspot_prob >= WARNING_THRESHOLD    # 0.65
+    is_warning_overload = overload_prob >= WARNING_OVL        # 0.75
     
     if alert_type == "Critical":
         # Determine the specific critical condition based on thresholds
@@ -366,14 +321,16 @@ Overload Risk: {overload_prob*100:.1f}%
 """
 
     try:
-        msg = Message(subject=subject,
-                      sender=app.config['MAIL_USERNAME'],
-                      recipients=recipients)
-
-        msg.body = body
-        mail.send(msg)
-
-        print(f"✓ Email sent: {subject}")
+        # Send email using Resend API
+        response = resend.Emails.send({
+            "from": "Breaker Monitor <onboarding@resend.dev>",
+            "to": recipients,
+            "subject": subject,
+            "text": body,
+        })
+        
+        print(f"✓ Email sent via Resend: {subject}")
+        print(f"   Email ID: {response.get('id', 'unknown')}")
         print(f"   - Hotspot: {hotspot_prob*100:.1f}% (Threshold: {CRITICAL_THRESHOLD*100:.0f}% for critical)")
         print(f"   - Overload: {overload_prob*100:.1f}% (Threshold: {CRITICAL_OVL*100:.0f}% for critical)")
         return True, "Sent"
@@ -387,68 +344,67 @@ Overload Risk: {overload_prob*100:.1f}%
 # STATE LOGIC (Version 2 preserved)
 # =========================================================
 def determine_state(hot_prob, ovl_prob):
-    try:
-        with buffer_lock:
-            if len(temp_buffer_short) < WARMUP_SAMPLES or len(temp_buffer_long) < WARMUP_SAMPLES:
-                return "WarmingUp", "System initializing..."
 
-        if hot_prob >= CRITICAL_THRESHOLD:
-            return "Critical", "Severe overheating detected"
+    if len(temp_buffer_short) < WARMUP_SAMPLES or len(temp_buffer_long) < WARMUP_SAMPLES:
+        return "WarmingUp", "System initializing..."
 
-        if ovl_prob >= CRITICAL_OVL:
-            return "Critical", "Severe overload detected"
+    if hot_prob >= CRITICAL_THRESHOLD:
+        return "Critical", "Severe overheating detected"
 
-        if hot_prob >= WARNING_THRESHOLD:
-            return "Warning", "Elevated temperature detected"
+    if ovl_prob >= CRITICAL_OVL:
+        return "Critical", "Severe overload detected"
 
-        if ovl_prob >= WARNING_OVL:
-            return "Warning", "High load detected"
+    if hot_prob >= WARNING_THRESHOLD:
+        return "Warning", "Elevated temperature detected"
 
-        return "Normal", "System stable"
-    except Exception as e:
-        print(f"⚠ State determination error: {e}")
-        return "Normal", "System monitoring active"
+    if ovl_prob >= WARNING_OVL:
+        return "Warning", "High load detected"
+
+    return "Normal", "System stable"
 
 # =========================================================
 # ACTION ENGINE (Version 2 preserved)
 # =========================================================
 def get_action(state, hotspot, overload):
-    try:
-        if state == "Warning":
-            if hotspot and overload:
-                return "Reduce load immediately → hotspot + overload detected. Check wiring."
-            if hotspot:
-                return "Reduce load and inspect connections."
-            if overload:
-                return "Turn off heavy appliances."
-            return "Monitor system."
 
-        if state == "Critical":
-            if hotspot and overload:
-                return "SHUT DOWN SYSTEM immediately."
-            if hotspot:
-                return "SHUT DOWN → overheating detected."
-            if overload:
-                return "DISCONNECT LOAD immediately."
-            return "Emergency inspection required."
+    if state == "Warning":
 
-        return "System normal."
-    except Exception as e:
-        print(f"⚠ Action generation error: {e}")
-        return "Monitor system - check connections"
+        if hotspot and overload:
+            return "Reduce load immediately → hotspot + overload detected. Check wiring."
+
+        if hotspot:
+            return "Reduce load and inspect connections."
+
+        if overload:
+            return "Turn off heavy appliances."
+
+        return "Monitor system."
+
+    if state == "Critical":
+
+        if hotspot and overload:
+            return "SHUT DOWN SYSTEM immediately."
+
+        if hotspot:
+            return "SHUT DOWN → overheating detected."
+
+        if overload:
+            return "DISCONNECT LOAD immediately."
+
+        return "Emergency inspection required."
+
+    return "System normal."
 
 # =========================================================
 # API ENDPOINT - FLASK CALCULATES EVERYTHING
 # =========================================================
 @app.route("/api/update", methods=["POST"])
 def update_data():
-    start_time = time.time()
-    
     # ===== VALIDATION =====
     try:
-        data = request.get_json(force=True, silent=True, cache=False)
+        data = request.json
         if not data:
-            return jsonify({"error": "No data received", "status": "error"}), 400
+            return jsonify({"error": "No data received"}), 400
         
         # Safe extraction with defaults
         temp = float(data.get("temperature", 0))
@@ -460,7 +416,7 @@ def update_data():
         if current < 0 or current > 100:
             return jsonify({"error": f"Invalid current: {current}"}), 400
             
-    except (TypeError, ValueError, Exception) as e:
+    except (TypeError, ValueError) as e:
         return jsonify({"error": f"Invalid sensor data: {str(e)}"}), 400
     
     # ===== ENHANCED DEBUG: SHOW EXACT RPI DATA =====
@@ -469,89 +425,43 @@ def update_data():
     print(f"   Temperature: {temp}°C")
     print(f"   Current: {current}A")
     
-    # ===== UPDATE BUFFERS WITH THREAD SAFETY =====
-    try:
-        with buffer_lock:
-            temp_buffer_short.append(temp)
-            temp_buffer_long.append(temp)
-            current_buffer_short.append(current)
-            current_buffer_long.append(current)
-        
-        print(f"📊 Buffer sizes: {len(temp_buffer_short)}/{temp_buffer_short.maxlen}")
-    except Exception as e:
-        print(f"⚠ Buffer update error: {e}")
-        # Continue even if buffers fail
+    # ===== UPDATE BUFFERS =====
+    temp_buffer_short.append(temp)
+    temp_buffer_long.append(temp)
+    current_buffer_short.append(current)
+    current_buffer_long.append(current)
+    
+    print(f"📊 Buffer sizes: {len(temp_buffer_short)}/{temp_buffer_short.maxlen}")
     
     # ==================================================
-    # FEATURE EXTRACTION WITH ERROR HANDLING
+    # FEATURE EXTRACTION
     # ==================================================
-    try:
-        X_hot = build_hotspot_X(temp, current)
-        X_ovr = build_overload_X(temp, current)
-    except Exception as e:
-        print(f"❌ Feature extraction failed: {e}")
-        # Return safe fallback response
-        return jsonify({
-            "temperature": float(temp),
-            "current": float(current),
-            "state": "Normal",
-            "breakerState": "Normal",
-            "status": "System online - monitoring",
-            "action": "System normal, continuing monitoring",
-            "ml": {
-                "hotspot_prob": 0.0,
-                "overload_prob": 0.0,
-                "composite_risk": 0.0
-            },
-            "forecast": {
-                "future_temp": float(temp),
-                "future_current": float(current)
-            },
-            "error": "Feature extraction temporary issue"
-        }), 200
+    X_hot = build_hotspot_X(temp, current)
+    X_ovr = build_overload_X(temp, current)
 
     # ==================================================
-    # HOTSPOT PREDICTION WITH ERROR HANDLING
+    # HOTSPOT PREDICTION
     # ==================================================
-    hot_prob = 0.0
-    try:
-        if hotspot_model is not None:
-            hot_prob = float(hotspot_model.predict_proba(X_hot)[0][1])
-            print(f"🔥 Hotspot Model Output: {hot_prob:.4f} ({hot_prob*100:.1f}%)")
-        else:
-            print("⚠ Hotspot model not loaded")
-    except Exception as e:
-        print(f"❌ Hotspot prediction failed: {e}")
-        hot_prob = 0.0
+    hot_prob = float(hotspot_model.predict_proba(X_hot)[0][1])
+    print(f"🔥 Hotspot Model Output: {hot_prob:.4f} ({hot_prob*100:.1f}%)")
 
     # ==================================================
-    # OVERLOAD PREDICTION WITH ERROR HANDLING
+    # OVERLOAD PREDICTION
     # ==================================================
-    ovl_prob = 0.0
-    try:
-        if overload_model is not None:
-            ovl_prob = float(overload_model.predict_proba(X_ovr)[0][1])
-            print(f"⚡ Overload Model Output: {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
-            
-            # Optional calibration for low current
-            if current < 16:
-                ovl_prob *= 0.5
-                print(f"⚡ Overload adjusted (low current): {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
-        else:
-            print("⚠ Overload model not loaded")
-    except Exception as e:
-        print(f"❌ Overload prediction failed: {e}")
-        ovl_prob = 0.0
+    ovl_prob = float(overload_model.predict_proba(X_ovr)[0][1])
+    print(f"⚡ Overload Model Output: {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
+
+    # Optional calibration for low current
+    if current < 16:
+        ovl_prob *= 0.5
+        print(f"⚡ Overload adjusted (low current): {ovl_prob:.4f} ({ovl_prob*100:.1f}%)")
 
     hot_prob_raw = hot_prob
     ovl_prob_raw = ovl_prob
 
     # =========================
-    # FORECAST CALCULATIONS WITH SAFE DEFAULTS
+    # FORECAST CALCULATIONS
     # =========================
-    future_temp = temp
-    future_current = current
-    
     try:
         slope1 = (
             float(X_hot["temp_slope_short"].iloc[0]) * 0.7 +
@@ -559,15 +469,15 @@ def update_data():
         )
         future_temp = temp + slope1 * 10
         print(f"📈 Temperature forecast: {future_temp:.2f}°C")
-    except Exception as e:
-        print(f"⚠ Temp forecast failed: {e}")
+    except Exception:
+        future_temp = temp
 
     try:
         slope = float(X_ovr["current_slope_short"].iloc[0])
         future_current = current + slope * 10
         print(f"📈 Current forecast: {future_current:.2f}A")
-    except Exception as e:
-        print(f"⚠ Current forecast failed: {e}")
+    except Exception:
+        future_current = current
 
     print(f"{'='*60}")
 
@@ -578,114 +488,72 @@ def update_data():
     # =========================
     # STATE (Version 2)
     # =========================
-    try:
-        state, status = determine_state(hot_prob, ovl_prob)
-        print(f"🎯 System State: {state} - {status}")
-    except Exception as e:
-        print(f"⚠ State determination failed: {e}")
-        state = "Normal"
-        status = "System monitoring active"
+    state, status = determine_state(hot_prob, ovl_prob)
+    print(f"🎯 System State: {state} - {status}")
 
     # Use correct thresholds for overload in action
-    action = "System normal, continuing monitoring"
-    try:
-        action = get_action(
-            state,
-            hot_prob >= WARNING_THRESHOLD,
-            ovl_prob >= WARNING_OVL
-        )
-        print(f"💡 Recommended Action: {action}")
-    except Exception as e:
-        print(f"⚠ Action generation failed: {e}")
+    action = get_action(
+        state,
+        hot_prob >= WARNING_THRESHOLD,
+        ovl_prob >= WARNING_OVL
+    )
+    print(f"💡 Recommended Action: {action}")
 
     # =========================
-    # ALERTS (With enhanced cooldown keys and timeout)
+    # ALERTS (With enhanced cooldown keys)
     # =========================
     if state in ["Warning", "Critical"]:
-        try:
-            # Create unique alert key based on state and what triggered it
-            if hot_prob >= WARNING_THRESHOLD and ovl_prob >= WARNING_OVL:
-                alert_trigger = "both"
-            elif hot_prob >= WARNING_THRESHOLD:
-                alert_trigger = "hotspot"
-            elif ovl_prob >= WARNING_OVL:
-                alert_trigger = "overload"
-            else:
-                alert_trigger = "unknown"
+        # Create unique alert key based on state and what triggered it
+        if hot_prob >= WARNING_THRESHOLD and ovl_prob >= WARNING_OVL:
+            alert_trigger = "both"
+        elif hot_prob >= WARNING_THRESHOLD:
+            alert_trigger = "hotspot"
+        elif ovl_prob >= WARNING_OVL:
+            alert_trigger = "overload"
+        else:
+            alert_trigger = "unknown"
+        
+        alert_key = f"{state}_{alert_trigger}"
+        
+        if should_send_alert(alert_key):
+            print(f"📧 Sending {state} alert (trigger: {alert_trigger})...")
             
-            alert_key = f"{state}_{alert_trigger}"
+            # Use SimpleNamespace for cleaner object creation
+            reading = SimpleNamespace(
+                temperature_c=temp,
+                current_a=current
+            )
             
-            # Run alert in separate thread with timeout
-            def send_alert_thread():
-                try:
-                    if should_send_alert(alert_key):
-                        print(f"📧 Sending {state} alert (trigger: {alert_trigger})...")
-                        
-                        reading = SimpleNamespace(
-                            temperature_c=temp,
-                            current_a=current
-                        )
-                        
-                        send_breaker_alert(
-                            reading=reading,
-                            risk={
-                                "hotspot_prob": hot_prob,
-                                "overload_prob": ovl_prob
-                            },
-                            alert_type=state,
-                            message_action=action
-                        )
-                    else:
-                        print(f"⏰ {state} alert suppressed (cooldown active for {alert_key})")
-                except Exception as e:
-                    print(f"⚠ Alert thread error: {e}")
-            
-            # Start alert in background thread to prevent blocking
-            alert_thread = threading.Thread(target=send_alert_thread)
-            alert_thread.daemon = True
-            alert_thread.start()
-            
-        except Exception as e:
-            print(f"⚠ Alert system error: {e}")
+            send_breaker_alert(
+                reading=reading,
+                risk={
+                    "hotspot_prob": hot_prob,
+                    "overload_prob": ovl_prob
+                },
+                alert_type=state,
+                message_action=action
+            )
+        else:
+            print(f"⏰ {state} alert suppressed (cooldown active for {alert_key})")
 
     # =========================
-    # SEND TO SUPABASE WITH TIMEOUT
+    # SEND TO SUPABASE WITH SERVER TIMESTAMP
     # =========================
-    supabase_success = False
-    try:
-        # Run supabase insert in separate thread with timeout
-        supabase_result = [False]
-        
-        def supabase_insert():
-            try:
-                result = send_to_supabase(
-                    temp, current, state,
-                    hot_prob, ovl_prob,
-                    composite_risk, action
-                )
-                supabase_result[0] = result
-            except Exception as e:
-                print(f"⚠ Supabase thread error: {e}")
-        
-        supabase_thread = threading.Thread(target=supabase_insert)
-        supabase_thread.daemon = True
-        supabase_thread.start()
-        supabase_thread.join(timeout=2.0)
-        
-        supabase_success = supabase_result[0]
-        
-        if supabase_success:
-            print("✅ DATA SAVED TO SUPABASE")
-        else:
-            print("⚠ Supabase save skipped or timed out")
-            
-    except Exception as e:
-        print(f"❌ Supabase error (non-critical): {e}")
+    supabase_success = send_to_supabase(
+        temp, current, state,
+        hot_prob, ovl_prob,
+        composite_risk, action
+    )
+
+    if supabase_success:
+        print("✅ DATA SAVED TO SUPABASE")
+    else:
+        print("❌ FAILED TO SAVE TO SUPABASE - Check logs above")
 
     # =========================
     # STORE RESPONSE
     # =========================
-    response_data = {
+    latest_data_store.update({
         "temperature": float(temp),
         "current": float(current),
         "state": state,
@@ -705,23 +573,13 @@ def update_data():
             "future_current": float(round(future_current, 2))
         },
         "buffer_size": int(len(temp_buffer_short)),
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "response_time_ms": round((time.time() - start_time) * 1000, 2)
-    }
-    
-    # Update store with thread safety
-    try:
-        with store_lock:
-            latest_data_store.clear()
-            latest_data_store.update(response_data)
-    except Exception as e:
-        print(f"⚠ Store update error: {e}")
+        "time": datetime.now().strftime("%H:%M:%S")
+    })
 
-    print(f"✅ FINAL: Hotspot={hot_prob*100:.1f}% | Overload={ovl_prob*100:.1f}% | Resp={response_data['response_time_ms']}ms")
+    print(f"✅ FINAL: Hotspot={hot_prob*100:.1f}% | Overload={ovl_prob*100:.1f}%")
     print("="*70)
 
-    # Always return valid JSON, even if some parts failed
-    return jsonify(response_data)
+    return jsonify(latest_data_store)
 
 # =========================================================
 # ROUTES
@@ -758,9 +616,7 @@ def latest():
             "time": datetime.now().strftime("%H:%M:%S")
         })
     
-    with store_lock:
-        response_data = dict(latest_data_store)
-    
+    response_data = dict(latest_data_store)
     if 'breakerState' not in response_data:
         response_data['breakerState'] = response_data.get('state', 'Normal')
     response_data['has_data'] = True
@@ -769,26 +625,18 @@ def latest():
 
 @app.route("/api/health")
 def health():
-    with buffer_lock:
-        buffer_size = len(temp_buffer_short)
-        buffer_max = temp_buffer_short.maxlen if temp_buffer_short else 0
-    
-    with store_lock:
-        has_data = bool(latest_data_store and len(latest_data_store) > 0)
-    
     return jsonify({
         "status": "online",
         "supabase_connected": supabase is not None,
         "email_enabled": email_enabled,
-        "buffer_size": buffer_size,
-        "buffer_max": buffer_max,
-        "latest_data_available": has_data
+        "buffer_size": len(temp_buffer_short),
+        "buffer_max": temp_buffer_short.maxlen if temp_buffer_short else 0,
+        "latest_data_available": bool(latest_data_store and len(latest_data_store) > 0)
     })
 
 @app.route("/api/reset-buffers", methods=["POST"])
 def reset_buffers_endpoint():
-    with buffer_lock:
-        reset_buffers()
+    reset_buffers()
     return jsonify({"success": True, "message": "Buffers reset"})
 
 @app.route("/api/test-supabase")
@@ -842,22 +690,15 @@ def get_full_history():
 
 @app.route("/api/debug")
 def debug():
-    with buffer_lock:
-        buffer_sizes = {
+    return jsonify({
+        "latest_data_store": latest_data_store,
+        "has_data": bool(latest_data_store and len(latest_data_store) > 0),
+        "buffer_sizes": {
             "temp_short": len(temp_buffer_short),
             "temp_long": len(temp_buffer_long),
             "current_short": len(current_buffer_short),
             "current_long": len(current_buffer_long)
-        }
-    
-    with store_lock:
-        has_data = bool(latest_data_store and len(latest_data_store) > 0)
-        store_copy = dict(latest_data_store) if has_data else {}
-    
-    return jsonify({
-        "latest_data_store": store_copy,
-        "has_data": has_data,
-        "buffer_sizes": buffer_sizes,
+        },
         "supabase_connected": supabase is not None
     })
 
@@ -878,6 +719,4 @@ if __name__ == "__main__":
     print("🧠 Flask calculates: hotspot_prob, overload_prob using ML models")
     print("🌐 Dashboard available at: http://localhost:5000")
     print("="*50)
-    
-    # Run with threaded=True to handle concurrent requests better
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
